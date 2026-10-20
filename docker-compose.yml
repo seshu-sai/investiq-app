@@ -1,0 +1,28 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: investiq
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-local-dev-only}
+      POSTGRES_DB: investiq
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U investiq"]
+      interval: 5s
+      retries: 10
+  api:
+    build: ./backend
+    environment:
+      DATABASE_URL: postgresql+psycopg://investiq:${POSTGRES_PASSWORD:-local-dev-only}@db:5432/investiq
+      CORS_ORIGINS: http://localhost:5173
+      FINNHUB_API_KEY: ${FINNHUB_API_KEY}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      SEC_USER_AGENT: ${SEC_USER_AGENT}
+    ports:
+      - '127.0.0.1:8000:8000'
+    depends_on:
+      db:
+        condition: service_healthy
+volumes:
+  postgres_data:
