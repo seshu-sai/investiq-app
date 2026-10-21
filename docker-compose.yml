@@ -17,7 +17,10 @@ services:
       DATABASE_URL: postgresql+psycopg://investiq:${POSTGRES_PASSWORD:-local-dev-only}@db:5432/investiq
       CORS_ORIGINS: http://localhost:5173
       FINNHUB_API_KEY: ${FINNHUB_API_KEY}
+      FINNHUB_REALTIME_ENTITLED: ${FINNHUB_REALTIME_ENTITLED:-false}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4.1-mini}
+      OPENAI_WEB_MODEL: ${OPENAI_WEB_MODEL:-gpt-4.1-mini}
       SEC_USER_AGENT: ${SEC_USER_AGENT}
     ports:
       - '127.0.0.1:8000:8000'

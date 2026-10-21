@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   ArrowRight, BrainCircuit, CheckCircle2, Clock3,
   RefreshCw, ShieldAlert, TrendingUp,
@@ -15,12 +15,27 @@ type Decision = {
   time_horizon: string;
   next_action: string;
   data_as_of: string | null;
+  analysis_mode: 'ai' | 'rules';
+  analysis_note: string;
 };
 
 type AIResult = {
   ai_summary: Decision;
   sources: { title: string; url: string }[];
   disclaimer: string;
+  analysis_id: number;
+  generated_at: string;
+  assessment: {
+    financial_period_end: string | null;
+    missing_data: string[];
+    warnings: string[];
+    risk_flags: string[];
+    required_before_buy: string[];
+    quote: { status: string; timestamp: string | null };
+    investor_fit: { risk: string; horizon: string; warnings: string[] };
+    metrics: { trailing_pe_at_quote: number | null; revenue_growth_trend: string; cash_flow_trend: string };
+    evidence: { id: string; period: string; source: string; revenue: number; currency: string | null; filed: string | null; accession: string | null }[];
+  };
 };
 
 export default function AIInsights({
@@ -33,26 +48,38 @@ export default function AIInsights({
   const [result, setResult] = useState<AIResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [ownsPosition, setOwnsPosition] = useState(false);
+  const pending = useRef<AbortController | null>(null);
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 30_000);
+    return () => { pending.current?.abort(); clearInterval(timer); };
+  }, []);
 
   async function analyze() {
+    pending.current?.abort();
+    const controller = new AbortController();
+    pending.current = controller;
     setLoading(true);
     setError('');
     setResult(null);
 
     try {
       const response = await fetch(
-        `/api/ai-analysis/${encodeURIComponent(market)}/${encodeURIComponent(symbol)}`
+        `/api/ai-analysis/${encodeURIComponent(market)}/${encodeURIComponent(symbol)}?owns_position=${ownsPosition}`,
+        { signal: controller.signal, cache: 'no-store' }
       );
 
       if (!response.ok) {
         throw new Error(`AI analysis unavailable (${response.status})`);
       }
 
-      setResult((await response.json()) as AIResult);
+      const data = (await response.json()) as AIResult;
+      if (!controller.signal.aborted) setResult(data);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Analysis failed');
+      if (!controller.signal.aborted) setError(err instanceof Error ? err.message : 'Analysis failed');
     } finally {
-      setLoading(false);
+      if (!controller.signal.aborted) setLoading(false);
     }
   }
 
@@ -123,6 +150,13 @@ export default function AIInsights({
         </button>
       </div>
 
+      <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 16 }}>
+        <input type="checkbox" checked={ownsPosition} disabled={loading}
+          onChange={event => { setOwnsPosition(event.target.checked); setResult(null); }} />
+        I already own shares in {symbol}
+      </label>
+      <p style={{ fontSize: 12 }}>Uses your saved risk tolerance and investment horizon. Save profile changes before analyzing.</p>
+
       {error && <p role="alert" style={{ color: '#dc2626' }}>{error}</p>}
 
       {!result && !loading && !error && (
@@ -139,6 +173,15 @@ export default function AIInsights({
 
       {decision && (
         <div style={{ marginTop: 22 }}>
+          <p style={{ fontSize: 12 }}>
+            {decision.analysis_mode === 'ai' ? 'AI-assisted research' : 'Rules-based research'} · Analysis #{result?.analysis_id}
+            <br />{decision.analysis_note}
+            <br />Quote as of: {decision.data_as_of ? new Date(decision.data_as_of).toLocaleString() : 'Unavailable'}
+            {' · '}Financial year ended: {result?.assessment.financial_period_end || 'Unavailable'}
+          </p>
+          {result && now - new Date(result.generated_at).getTime() > 120_000 && (
+            <p role="status">This is a saved research snapshot. Refresh analysis to check for updated evidence.</p>
+          )}
           <div style={{
             padding: 22,
             borderRadius: 18,
@@ -165,7 +208,7 @@ export default function AIInsights({
                 {verdict}
               </span>
               <span style={{ fontSize: 12, opacity: .65 }}>
-                AI investment outlook
+                Research assessment
               </span>
             </div>
 
@@ -178,6 +221,28 @@ export default function AIInsights({
               {decision.headline}{decision.reason ? ` ${decision.reason}` : ''}
             </p>
           </div>
+
+          {result && <div style={{ marginTop: 18 }}>
+            <p><strong>Profile:</strong> {result.assessment.investor_fit.risk} risk · {decision.time_horizon}</p>
+            <p><strong>Revenue growth:</strong> {result.assessment.metrics.revenue_growth_trend}
+              {' · '}<strong>Cash generation:</strong> {result.assessment.metrics.cash_flow_trend}
+              {' · '}<strong>P/E at quote:</strong> {result.assessment.metrics.trailing_pe_at_quote ?? 'Unavailable'}</p>
+            {[...result.assessment.missing_data, ...result.assessment.risk_flags,
+              ...result.assessment.investor_fit.warnings].length > 0 && <ul>
+              {[...result.assessment.missing_data, ...result.assessment.risk_flags,
+                ...result.assessment.investor_fit.warnings].map(item => <li key={item}>{item}</li>)}
+            </ul>}
+            <details>
+              <summary>Evidence and requirements before buying</summary>
+              <ul>{result.assessment.required_before_buy.map(item => <li key={item}>{item}</li>)}</ul>
+              <ul>{result.assessment.warnings.map((item, index) => <li key={`${index}-${item}`}>{item}</li>)}</ul>
+              {result.assessment.evidence.map(item => <p key={item.id}>
+                {item.period} · {item.source} · Revenue: {item.revenue.toLocaleString()} {item.currency || '(currency unverified)'}
+                {item.filed ? ` · Filed ${item.filed}` : ''}
+                {item.accession ? ` · Accession ${item.accession}` : ''}
+              </p>)}
+            </details>
+          </div>}
 
           <div style={{
             display: 'flex',

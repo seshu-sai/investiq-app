@@ -32,13 +32,13 @@ def calculate_cash_flow_valuation(
         margin_of_safety,
     )
 
-    if not all(isinstance(v, (int, float)) and math.isfinite(v) for v in values):
+    if not all(isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v) for v in values):
         raise ValuationError("All valuation inputs must be finite numbers")
 
     if annual_cash_flow <= 0 or shares_outstanding <= 0:
         raise ValuationError("Positive cash flow and share count are required")
 
-    if not 1 <= years <= 10:
+    if isinstance(years, bool) or not isinstance(years, int) or not 1 <= years <= 10:
         raise ValuationError("Projection years must be between 1 and 10")
 
     if not -0.5 <= growth_rate <= 1:

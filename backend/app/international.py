@@ -4,16 +4,20 @@ import re
 
 import yfinance as yf
 
+from .data_utils import normalize_symbol, ttl_cache
+from .price_validation import validate_market_quote
+
 
 class MarketDataError(Exception):
     pass
 
 
+@ttl_cache(60)
 def get_international_research(market: str, symbol: str):
     if market not in ("IN", "CA"):
         raise MarketDataError("Unsupported market")
 
-    symbol = symbol.strip().upper()
+    symbol = normalize_symbol(market, symbol)
 
     if not re.fullmatch(r"[A-Z0-9.\-]{1,32}", symbol):
         raise MarketDataError("Invalid ticker symbol")
@@ -23,13 +27,13 @@ def get_international_research(market: str, symbol: str):
             symbol += ".NS"
         currency = "INR"
     else:
-        if not symbol.endswith(".TO"):
+        if not symbol.endswith((".TO", ".V")):
             symbol += ".TO"
         currency = "CAD"
 
     try:
         ticker = yf.Ticker(symbol)
-        history = ticker.history(period="5d", auto_adjust=False)
+        history = ticker.history(period="5d", auto_adjust=False, timeout=12)
 
         if history.empty:
             raise MarketDataError(f"No price data available for {symbol}")
@@ -59,7 +63,7 @@ def get_international_research(market: str, symbol: str):
             else None
         )
 
-        return {
+        result = {
             "market": market,
             "symbol": symbol,
             "status": "connected",
@@ -74,6 +78,9 @@ def get_international_research(market: str, symbol: str):
                 "previous_close": previous_close,
                 "timestamp": int(history.index[-1].timestamp()),
                 "currency": currency,
+                "price_type": "daily_bar",
+                "realtime_entitled": False,
+                "retrieved_at": datetime.now(timezone.utc).isoformat(),
             },
             "sources": [],
             "catalysts": [],
@@ -84,6 +91,8 @@ def get_international_research(market: str, symbol: str):
                 "Verified company news and AI forecasts are not yet available."
             ),
         }
+        result["quote_validation"] = validate_market_quote(result["quote"])
+        return result
 
     except MarketDataError:
         raise
@@ -93,6 +102,7 @@ def get_international_research(market: str, symbol: str):
         ) from exc
 
 
+@ttl_cache(60)
 def search_international_stocks(market: str, query: str):
     """Search Indian or Canadian listed stocks by name or ticker."""
     import httpx
@@ -122,6 +132,9 @@ def search_international_stocks(market: str, query: str):
             data = response.json()
     except (httpx.HTTPError, ValueError) as exc:
         raise MarketDataError("International stock search failed") from exc
+
+    if not isinstance(data, dict) or not isinstance(data.get("quotes", []), list):
+        raise MarketDataError("Invalid international stock search response")
 
     suffixes = (".NS", ".BO") if market == "IN" else (".TO", ".V")
 

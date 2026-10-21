@@ -5,6 +5,8 @@ type Research = {
   symbol: string;
   status: string;
   provider?: string;
+  quote_validation?: { status: string; reason: string; timestamp: string | null };
+  warnings?: string[];
   quote?: {
     current: number;
     change: number | null;
@@ -42,28 +44,43 @@ export default function LiveResearch({
     setData(null);
     setError('');
 
-    fetch(`/api/research/${encodeURIComponent(market)}/${encodeURIComponent(symbol)}`, {
+    let timer: ReturnType<typeof setTimeout>;
+    const refresh = () => {
+      if (document.hidden) {
+        timer = setTimeout(refresh, 60_000);
+        return;
+      }
+      fetch(`/api/research/${encodeURIComponent(market)}/${encodeURIComponent(symbol)}`, {
       signal: controller.signal,
+      cache: 'no-store',
     })
       .then(async response => {
         if (!response.ok) throw new Error(`Research unavailable (HTTP ${response.status})`);
         return response.json() as Promise<Research>;
       })
       .then(result => {
-        if (!controller.signal.aborted) setData(result);
+        if (!controller.signal.aborted) {
+          setData(result);
+          setError('');
+        }
       })
       .catch(err => {
         if (!controller.signal.aborted) setError(String(err));
       })
       .finally(() => {
-        if (!controller.signal.aborted) setLoading(false);
+        if (!controller.signal.aborted) {
+          setLoading(false);
+          timer = setTimeout(refresh, 60_000);
+        }
       });
+    };
+    refresh();
 
-    return () => controller.abort();
+    return () => { controller.abort(); clearTimeout(timer); };
   }, [market, symbol]);
 
   if (loading) return <p>Loading {symbol}…</p>;
-  if (error) return <p role="alert">{error}</p>;
+  if (error && !data) return <p role="alert">{error}</p>;
   if (!data) return null;
   if (data.status !== 'connected' || !data.quote) return <p>{data.message}</p>;
 
@@ -88,6 +105,7 @@ export default function LiveResearch({
       border: '1px solid rgba(148,163,184,.22)',
       borderRadius: 18,
     }}>
+      {error && <p role="alert">Refresh failed. The displayed quote is from the timestamp below.</p>}
       <div style={{
         display: 'flex',
         alignItems: 'center',
@@ -120,6 +138,14 @@ export default function LiveResearch({
           {q.currency}
         </span>
       </div>
+
+      <p style={{ fontSize: 12, marginTop: 12 }}>
+        <strong>{data.quote_validation?.status.replaceAll('_', ' ') || 'Freshness unverified'}</strong>
+        {' · '}{q.timestamp ? new Date(q.timestamp * 1000).toLocaleString() : 'Timestamp unavailable'}
+        <br />Refreshes every 60 seconds while this page is visible.
+      </p>
+      <p style={{ fontSize: 12 }}>{data.quote_validation?.reason}</p>
+      {data.warnings?.map(warning => <p key={warning} role="status">{warning}</p>)}
 
       <div style={{
         display: 'grid',

@@ -93,7 +93,7 @@ export default function Trajectory({
         flexWrap: 'wrap',
       }}>
         <div>
-          <div style={{ opacity: .65, fontSize: 12 }}>3-YEAR OUTLOOK</div>
+          <div style={{ opacity: .65, fontSize: 12 }}>3-YEAR HYPOTHETICAL SCENARIOS</div>
           <h3 style={{ margin: '5px 0' }}>{fundamentals.company || symbol}</h3>
         </div>
         <span style={{
@@ -148,7 +148,7 @@ export default function Trajectory({
             <summary style={{ cursor: 'pointer', opacity: .8 }}>
               View valuation assumptions
             </summary>
-            <p>Indicative starting value: {money(trajectory.current_price || 0)}</p>
+            <p>Starting provider price: {money(trajectory.current_price || 0)}</p>
             <p>Trailing EPS: {fundamentals.trailing_eps ?? 'N/A'} · P/E: {fundamentals.trailing_pe ?? 'N/A'}</p>
             {trajectory.scenarios.map(s => (
               <p key={s.scenario}>

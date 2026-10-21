@@ -15,10 +15,11 @@ def calculate_trajectory(
     values = (current_price, trailing_eps, current_pe)
 
     if (
-        not all(isinstance(v, (int, float)) and isfinite(v) for v in values)
+        not all(isinstance(v, (int, float)) and not isinstance(v, bool) and isfinite(v) for v in values)
         or current_price <= 0
         or trailing_eps <= 0
         or current_pe <= 0
+        or isinstance(years, bool) or not isinstance(years, int) or not 1 <= years <= 10
     ):
         return {
             "status": "insufficient_data",
@@ -67,21 +68,9 @@ def calculate_trajectory(
             "annualized_return_percent": round(annualized_return, 2),
         })
 
-    base = next(
-        item for item in scenarios
-        if item["scenario"] == "base"
-    )
-
-    if base["annualized_return_percent"] >= 12:
-        assessment = "Potential opportunity — further research required"
-    elif base["annualized_return_percent"] >= 5:
-        assessment = "Watch — valuation needs review"
-    else:
-        assessment = "Avoid for now — illustrative return is limited"
-
     return {
         "status": "illustrative",
-        "assessment": assessment,
+        "assessment": "Hypothetical sensitivity analysis",
         "current_price": round(current_price, 2),
         "trailing_eps": round(trailing_eps, 2),
         "current_pe": round(current_pe, 2),
