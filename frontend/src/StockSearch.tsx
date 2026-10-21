@@ -19,9 +19,11 @@ export default function StockSearch({
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
 
   useEffect(() => {
     const query = value.trim();
+    setError('');
 
     if (query.length < 2 || !open) {
       setSuggestions([]);
@@ -42,9 +44,12 @@ export default function StockSearch({
         if (!response.ok) throw new Error('Search failed');
 
         const data = (await response.json()) as Suggestion[];
-        setSuggestions(data);
+        if (!controller.signal.aborted) setSuggestions(data);
       } catch {
-        if (!controller.signal.aborted) setSuggestions([]);
+        if (!controller.signal.aborted) {
+          setSuggestions([]);
+          setError('Search is temporarily unavailable. You can still enter a ticker directly.');
+        }
       } finally {
         if (!controller.signal.aborted) setLoading(false);
       }
@@ -85,7 +90,7 @@ export default function StockSearch({
         />
       </div>
 
-      {open && (suggestions.length > 0 || loading) && (
+      {open && (suggestions.length > 0 || loading || error) && (
         <div style={{
           position: 'absolute',
           zIndex: 30,
@@ -100,6 +105,7 @@ export default function StockSearch({
           maxHeight: 280,
           overflowY: 'auto',
         }}>
+          {error && <div role="alert" style={{ padding: 12, fontSize: 13 }}>{error}</div>}
           {loading && (
             <div style={{ padding: 12, fontSize: 13, opacity: .65 }}>
               Searching stocks...

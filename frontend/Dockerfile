@@ -12,7 +12,12 @@ RUN npm run build
 # Stage 2: Serve the application with Nginx
 FROM nginx:1.27-alpine
 
-COPY nginx.conf /etc/nginx/conf.d/default.conf
+# Use the platform's private DNS at runtime, including Railway IPv6 resolvers.
+ENV API_UPSTREAM=investiq-app.railway.internal:8000 \
+    NGINX_ENTRYPOINT_LOCAL_RESOLVERS=1 \
+    NGINX_ENVSUBST_FILTER="^(API_UPSTREAM|NGINX_LOCAL_RESOLVERS)$"
+
+COPY nginx.conf /etc/nginx/templates/default.conf.template
 
 COPY --from=build /app/dist /usr/share/nginx/html
 
