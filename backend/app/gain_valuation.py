@@ -6,6 +6,7 @@ import json
 from statistics import median
 
 from .data_utils import finite_number
+from .position_plan import build_position_plan
 
 RISK_LIMITS = {'low': {'goal': 6, 'loss': 15, 'volatility': 20},
                'medium': {'goal': 10, 'loss': 30, 'volatility': 40},
@@ -60,7 +61,8 @@ def earnings_scenarios(fundamentals, financials, price, years, annual_goal):
 
 def build_gain_view(snapshot, history, profile, fx, *, annual_goal=None, max_loss=None,
                     max_volatility=None, max_downside=None, min_history_years=None,
-                    max_quote_age_minutes=None, min_excess_return=None, cost_basis=None, shares=None):
+                    max_quote_age_minutes=None, min_excess_return=None, cost_basis=None, shares=None,
+                    risk_budget=None, planned_stop=None, planned_target=None):
     from .advisor import assess_evidence
     from .price_validation import validate_market_quote
     risk = profile.get('risk', 'medium')
@@ -81,6 +83,7 @@ def build_gain_view(snapshot, history, profile, fx, *, annual_goal=None, max_los
                 'max_volatility': limits['volatility'], 'max_downside': limits['loss'],
                 'min_history_years': 3, 'max_quote_age_minutes': 15, 'min_excess_return': 0}
     context = {'market': snapshot['market'], 'symbol': snapshot['symbol'],
+               'position_inputs': {'risk_budget': risk_budget, 'planned_stop': planned_stop, 'planned_target': planned_target},
                'criteria': criteria, 'risk': risk, 'horizon': profile.get('horizon'),
                'currency': profile.get('currency'), 'amount': float(profile['amount']),
                'markets': sorted(profile.get('markets', [])), 'assets': sorted(profile.get('assets', []))}
@@ -155,6 +158,20 @@ def build_gain_view(snapshot, history, profile, fx, *, annual_goal=None, max_los
     reason = reasons[0] if reasons else 'Quantitative checks pass. Review current company-specific web evidence before treating this as a buy candidate.'
     if unsuitable and not insufficient:
         reason = next(row['detail'] for row in checks if not row['passed'] and row['label'] in ('Loss tolerance', 'Risk profile', 'Preference fit'))
+    position_plan = build_position_plan(quote, amount, fx_rate, risk_budget=risk_budget,
+                                        planned_stop=planned_stop, planned_target=planned_target,
+                                        max_quote_age_minutes=quote_age_limit)
+    market_asset_fit = snapshot['market'] in profile.get('markets', []) and 'stocks' in profile.get('assets', [])
+    risk_passes = all(row['passed'] for row in checks if row['label'] in ('Loss tolerance', 'Risk profile'))
+    if position_plan['status'] == 'calculated' and not market_asset_fit:
+        position_plan = {key: position_plan[key] for key in ('risk_budget_percent', 'planned_stop', 'planned_target', 'note')}
+        position_plan.update(status='risk_conflict',
+                             reason='Position size is withheld because this stock does not match your saved markets or asset types.')
+    elif position_plan['status'] == 'calculated' and not risk_passes:
+        position_plan.update(status='review_required',
+                             reason='Hypothetical sizing only: the stock fails your historical risk limits. A planned exit does not remove that conflict.',
+                             risk_conflicts=[row['detail'] for row in checks
+                                             if row['label'] in ('Loss tolerance', 'Risk profile') and not row['passed']])
     return {'market': snapshot['market'], 'symbol': snapshot['symbol'], 'company': snapshot['fundamentals'].get('company'),
             'generated_at': datetime.now(timezone.utc).isoformat(), 'quote': snapshot.get('quote'), 'quote_validation': quote,
             'preferences': {**profile, 'annual_return_goal_percent': goal, 'max_loss_percent': loss,
@@ -171,6 +188,7 @@ def build_gain_view(snapshot, history, profile, fx, *, annual_goal=None, max_los
                        'hypothetical_fractional_shares': round(units, 6) if units is not None else None,
                        'fx': fx, 'fx_note': 'Base-currency gain examples assume unchanged FX. Rates are daily, not real-time; costs and tax are excluded.'},
             'historical': history, 'historical_budget_cases': historical_cases, 'valuation': valuation,
+            'position_plan': position_plan,
             'unrealized_gain': unrealized,
             'buy_assessment': {'verdict': verdict, 'reason': reason, 'quantitative_candidate': eligible,
                                'checks': checks, 'research_required': True,

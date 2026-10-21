@@ -16,12 +16,12 @@ class HistoryError(ValueError):
     pass
 
 
-def _rows(frame):
-    if frame.empty or 'Close' not in frame:
+def _rows(frame, column='Close'):
+    if frame.empty or column not in frame:
         raise HistoryError('Historical prices are unavailable')
     result = []
     for index, row in frame.iterrows():
-        value = finite_number(float(row['Close']))
+        value = finite_number(float(row[column]))
         session = index.date()
         if value is not None and value > 0 and session <= datetime.now(timezone.utc).date():
             result.append({'date': session.isoformat(), 'close': value})
@@ -38,15 +38,16 @@ def get_price_history(market, symbol, benchmark=False):
         ticker = ticker.replace('.', '-')
     try:
         data = yf.Ticker(ticker)
-        frame = data.history(period='10y', interval='1d', auto_adjust=True, timeout=15)
-        rows = _rows(frame)
+        frame = data.history(period='10y', interval='1d', auto_adjust=False, timeout=15)
+        rows = _rows(frame, 'Adj Close')
+        price_closes = _rows(frame)
         metadata = data.history_metadata or {}
         currency = metadata.get('currency')
     except HistoryError:
         raise
     except Exception as exc:
         raise HistoryError('Historical provider is unavailable') from exc
-    return {'symbol': ticker, 'currency': currency, 'prices': rows,
+    return {'symbol': ticker, 'currency': currency, 'prices': rows, 'price_closes': price_closes,
             'provider': 'Yahoo Finance (unofficial)', 'adjusted': True,
             'retrieved_at': datetime.now(timezone.utc).isoformat(),
             'definition': 'Provider dividend/split-adjusted daily closes; approximate reinvested total returns before tax and costs'}

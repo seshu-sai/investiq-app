@@ -421,3 +421,34 @@ def test_all_criteria_reach_api_calculation_and_research_audit(client, monkeypat
 def test_invalid_custom_limits_rejected_for_get_and_research(client, name, value):
     assert client.get('/api/valuation/US/TEST', params={name: value}).status_code == 422
     assert client.post('/api/valuation/US/TEST/research', json={name: value}).status_code == 422
+
+
+def test_position_planning_preserves_risk_limits_but_does_not_require_earnings_stress_to_pass(gain_sample):
+    options = {'risk_budget': 1, 'planned_stop': 18, 'planned_target': 25, 'max_downside': 1}
+    result = gain_view(gain_sample, **options)
+    assert not checks(result)['Downside sensitivity']['passed']
+    assert result['position_plan']['status'] == 'calculated'
+    review = gain_view(gain_sample, max_volatility=19, **options)
+    assert review['position_plan']['status'] == 'review_required'
+    assert review['position_plan']['shares'] == result['position_plan']['shares']
+    assert review['position_plan']['risk_conflicts']
+    gain_sample['profile']['markets'] = ['CA']
+    blocked = gain_view(gain_sample, **options)
+    assert blocked['position_plan']['status'] == 'risk_conflict'
+    assert 'shares' not in blocked['position_plan']
+    assert blocked['position_plan']['planned_stop'] == 18
+
+
+@pytest.mark.parametrize('method', ['get', 'post'])
+def test_position_inputs_reach_calculation_and_are_audited(client, monkeypatch, gain_sample, method):
+    from app import valuation_service
+    options = {'risk_budget': 1, 'planned_stop': 18, 'planned_target': 25}
+    monkeypatch.setattr(valuation_service, 'valuation_snapshot', lambda *args, **kw: gain_view(gain_sample, **kw))
+    path = '/api/valuation/US/TEST'
+    response = client.get(path, params=options) if method == 'get' else client.post(path + '/research', json=options)
+    assert response.status_code == 200, response.text
+    result = response.json()
+    assert result['position_plan']['shares'] == 18
+    if method == 'post':
+        run = client.get('/api/analysis-history/US/TEST').json()[0]
+        assert run['snapshot']['valuation']['position_plan']['planned_loss'] == 48

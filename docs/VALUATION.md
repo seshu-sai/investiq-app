@@ -1,12 +1,27 @@
 # Valuation and potential gains
 
-Select a stock in Overview, then open **Valuation**. This view supports US, Canadian and Indian stocks when the required data is available.
+Select a stock in Overview, then open **Valuation**. This view supports US, Canadian and Indian stocks when the required data is available. **Current market** is the default view; **Long-term valuation** retains the earnings scenarios and strict buy-candidate checklist.
 
-- Your saved amount, base currency, risk level and horizon provide the starting inputs. Override the modeled amount, annual return hurdle or maximum loss on this screen and press **Apply goals**. Overrides do not overwrite your saved profile.
+- Your saved amount, base currency, risk level and horizon provide the starting inputs. Expand **Screening limits and your existing position** to edit screening thresholds, or change the modeled budget in the position planner, then press **Apply criteria**. Overrides do not overwrite your saved profile.
 - Enter both your average buy price and shares owned to see unrealized gain/loss in the stock's currency. This is calculated from the latest available provider price, not your brokerage's executable bid/ask. Figures refresh every 60 seconds while the tab is visible.
 - Inspect adjusted historical returns, maximum peak-to-trough drawdown, annualized volatility, a growth-of-100 chart and an ETF comparison over matching dates. Yahoo's adjusted daily closes approximate dividends and splits; prices and currency metadata remain unofficial. Historical returns are expressed in the stock currency.
 - Review downside/base/upside earnings sensitivities and hypothetical gains/losses on the modeled budget. A dated daily FX rate converts the budget; base-currency gains hold FX constant. Actual currency movement, fees, tax, bid/ask spreads and dividend payments are excluded from the earnings sensitivities. The full-budget example is a calculator, not a position-size recommendation.
 - Press **Research latest news** for a live, cited web search and a separate structured assessment. This makes OpenAI requests and can use API/tool credits. Price polling never calls OpenAI. The returned web sources appear as clickable inline citations; date extraction still requires source review. Each manual review is saved to the research audit history.
+
+## Current-market context and position planning
+
+The current-market view describes price conditions for entry research over days to weeks. It does not require a five-year earnings sensitivity to clear every stress test. It uses at least 61 completed daily sessions, excluding the current exchange-local date because its bar can be provisional. The latest completed session must be within four calendar days and recent gaps cannot exceed ten days. Historical return calculations retain dividend/split-adjusted closes; trend indicators use price closes without dividend adjustment, matching the quote price basis. Both series come from one Yahoo history request.
+
+The observed trend is **supportive** when the latest usable trade quote and 20-session simple moving average are both above the 50-session average, **weak** when both are below it, and **mixed** otherwise. These are explicit descriptive rules, not optimized trading signals. The page also shows 20/60-session price changes, Wilder 14-session RSI and the 60-session return difference versus the matching-market ETF on precisely matching dates. RSI at least 70 flags an extended supportive trend; at most 30 flags depressed momentum, not an automatic buy. Missing benchmark evidence remains unavailable rather than contributing a neutral score. There is no weighted score, expected gain or win probability.
+
+A stale/missing/future trade quote or daily bar produces **FRESH TRADE QUOTE NEEDED**, with historical context retained. A stock outside saved markets/assets or the selected historical drawdown/volatility limits produces **REVIEW YOUR RISK LIMITS**. A supportive trend does not clear either conflict. Real-time labeling still requires provider entitlement and a timestamp within two minutes. Prices poll every 60 seconds; daily indicators cache for 15 minutes and this is not an intraday streaming strategy. Financial completeness, annual return goals and terminal stress losses remain visible in the separate long-term view. The cited news review receives both views and retains its long-term verdict restrictions.
+
+The position planner takes an explicit **budget-risk percentage**, **planned exit below the current quote** and optional **target above the quote**. A 1% budget-risk input is distinct from a 1% maximum terminal stock loss. It calculates whole shares as the smaller of:
+
+- Stock-currency budget / current quote.
+- Stock-currency budget × risk percentage / (current quote − planned exit).
+
+The result shows allocation, unallocated budget, planned loss in the base currency, stock-to-exit distance and optional target gain/reward-to-risk. It places no orders. The modeled budget is not verified client portfolio equity. Gaps, slippage, fees, tax and currency changes can make actual losses exceed the planned amount. Missing FX or a fresh quote, invalid exit/target levels, and saved-market/asset conflicts withhold position size. Historical drawdown/volatility conflicts retain the hypothetical arithmetic with an explicit review-required status and the failed limits; they never become a passed risk assessment merely because a small position is modeled. Price refresh recalculates the plan using the same entered levels; levels that become invalid withhold it. Editing plan inputs clears the previous news assessment just like editing screening thresholds.
 
 ## Calculations and assumptions
 
@@ -48,8 +63,9 @@ These gates are intentionally transparent. They have not been validated as a pro
 
 - `GET /api/valuation/{market}/{symbol}`: current calculations, no model call. Optional query inputs: `amount`, `annual_goal`, `max_loss` (historical drawdown), `max_volatility`, `max_downside` (terminal scenario loss), `min_history_years`, `max_quote_age_minutes`, `min_excess_return` (percentage points/year), `cost_basis`, `shares`. Responses include `preferences.applied_screening`, `screening_defaults` and a resolved `screening_key` for review compatibility.
 - `POST /api/valuation/{market}/{symbol}/research`: the same optional inputs in a JSON body, plus cited web research and audit persistence.
+- Both valuation endpoints also accept `risk_budget` (percentage of modeled budget), `planned_stop` and optional `planned_target` (stock-currency prices). Risk and stop must be supplied together; a target requires both. Responses include `market_setup` and `position_plan`, and manual research audits retain these calculations and assumptions.
 - `GET /api/cash-flow-valuation/{market}/{symbol}`: the original SEC cash-flow sensitivity endpoint (US only).
 
 Price history and FX cache for 15 minutes. Fundamentals and filings cache for 5 minutes. Finnhub trade quotes cache for 15 seconds. A page refresh does not make annual statements or daily bars real-time.
 
-Sources: [yfinance history API](https://ranaroussi.github.io/yfinance/reference/yfinance.price_history.html), [OpenAI web-search API and citation requirements](https://developers.openai.com/api/docs/guides/tools-web-search), [FINRA on return and historical performance](https://syndication.finra.org/content/key-concepts-return-and-rate-return).
+Sources: [yfinance history API](https://ranaroussi.github.io/yfinance/reference/yfinance.price_history.html), [Fidelity simple moving averages](https://www.fidelity.com/learning-center/trading-investing/technical-analysis/technical-indicator-guide/sma), [Fidelity RSI](https://www.fidelity.com/learning-center/trading-investing/technical-analysis/technical-indicator-guide/RSI), [OpenAI web-search API and citation requirements](https://developers.openai.com/api/docs/guides/tools-web-search), [FINRA on return and historical performance](https://syndication.finra.org/content/key-concepts-return-and-rate-return).

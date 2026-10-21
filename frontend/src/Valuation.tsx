@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { RefreshCw, Search, TrendingUp, ShieldAlert } from 'lucide-react';
+import MarketSetup, { type MarketSetupData, type PositionPlanData } from './MarketSetup';
 
 type Case = { name: string; future_price: number; total_return_percent: number; annualized_return_percent: number;
   eps_growth_percent: number; exit_pe: number; gain_in_base_currency: number | null; ending_value_in_base_currency: number | null };
@@ -30,13 +31,15 @@ type ValuationData = {
   valuation: { status: string; reason?: string; scenarios: Case[]; years?: number; definition?: string; limitations?: string; goal_entry_price?: number };
   unrealized_gain: { gain: number; currency: string; return_percent: number; shares: number; average_buy_price: number; market_value: number } | null;
   buy_assessment: Verdict; sources: { title: string; url: string; published_at: number; source: string }[];
+  market_setup?: MarketSetupData; position_plan?: PositionPlanData;
   warnings: string[]; web_research: Research; disclaimer: string;
 };
 type ScreeningInput = 'annual_goal' | 'max_loss' | 'max_volatility' | 'max_downside' | 'min_history_years' | 'max_quote_age_minutes' | 'min_excess_return';
-type Inputs = Record<ScreeningInput | 'amount' | 'cost_basis' | 'shares', string>;
+type Inputs = Record<ScreeningInput | 'amount' | 'cost_basis' | 'shares' | 'risk_budget' | 'planned_stop' | 'planned_target', string>;
 type Options = Partial<Record<keyof Inputs, number>>;
 const emptyInputs: Inputs = { amount: '', annual_goal: '', max_loss: '', max_volatility: '', max_downside: '',
-  min_history_years: '', max_quote_age_minutes: '', min_excess_return: '', cost_basis: '', shares: '' };
+  min_history_years: '', max_quote_age_minutes: '', min_excess_return: '', cost_basis: '', shares: '',
+  risk_budget: '', planned_stop: '', planned_target: '' };
 const money = (value: number | null | undefined, currency: string) => typeof value === 'number' && Number.isFinite(value)
   ? new Intl.NumberFormat('en-CA', { style: 'currency', currency, maximumFractionDigits: 2 }).format(value) : 'Unavailable';
 const pct = (value: number | null | undefined) => typeof value === 'number' ? `${value > 0 ? '+' : ''}${value.toFixed(1)}%` : 'Unavailable';
@@ -65,6 +68,7 @@ function HistoryChart({ points }: { points: { date: string; growth_of_100: numbe
 }
 
 export default function Valuation({ market, symbol }: { market: string; symbol: string }) {
+  const [view, setView] = useState<'market' | 'valuation'>('market');
   const [data, setData] = useState<ValuationData | null>(null);
   const [review, setReview] = useState<ValuationData | null>(null);
   const [inputs, setInputs] = useState<Inputs>(emptyInputs);
@@ -110,6 +114,7 @@ export default function Valuation({ market, symbol }: { market: string; symbol: 
 
   useEffect(() => {
     setData(null); setReview(null); setInputs(emptyInputs); setDirty(false); applied.current = {};
+    setView('market');
     void load({});
     const timer = setInterval(() => {
       setNow(Date.now());
@@ -146,12 +151,22 @@ export default function Valuation({ market, symbol }: { market: string; symbol: 
         : 'The news review has expired or the current price or screening inputs no longer pass. Refresh the web review before considering an entry.' };
   }
   const web = review?.web_research;
+  const plan = data?.position_plan;
+  const hasPlan = plan?.status === 'calculated' || plan?.status === 'review_required';
+  const planQuoteFresh = !!data?.quote?.timestamp && data.quote_validation.valid && data.quote_validation.status !== 'daily_bar'
+    && now - data.quote.timestamp * 1000 <= data.preferences.max_quote_age_minutes * 60_000;
 
   return <section className="gain-valuation">
     <div className="gain-row"><div><h3>{data?.company || symbol}</h3><p className="gain-small">Valuation, historical returns and your gain/loss scenarios</p></div>
       <button className="outline" type="button" disabled={loading} onClick={() => void load(applied.current)}><RefreshCw size={16} /> Refresh prices</button></div>
-    <form ref={form} className="gain-controls" onSubmit={event => { event.preventDefault(); apply(); }}>
-      <label>Amount to model ({base})<input type="number" min="0.01" max="1000000000000" step="0.01" value={inputs.amount} placeholder={String(data?.budget.amount || '')} onChange={event => field('amount', event.target.value)} /></label>
+    <div className="valuation-tabs" aria-label="Analysis view">
+      <button type="button" aria-pressed={view === 'market'} onClick={() => setView('market')}>Current market</button>
+      <button type="button" aria-pressed={view === 'valuation'} onClick={() => setView('valuation')}>Long-term valuation</button>
+    </div>
+    {dirty && <p className="gain-small" role="status">You have unapplied changes. Results below still use the last applied criteria; any previous buy-candidate signal is withheld.</p>}
+    {view === 'market' && <MarketSetup setup={data?.market_setup} quote={data?.quote || null} currency={stock} now={now} onResearch={() => apply(true)} disabled={loading} />}
+    <form ref={form} onSubmit={event => { event.preventDefault(); apply(); }}>
+      <details className="gain-details screening-settings" open={view === 'valuation'}><summary>Screening limits and your existing position</summary><div className="gain-controls">
       <label>Annual return goal (%)<input type="number" min="0.1" max="100" step="0.1" value={inputs.annual_goal} placeholder={String(defaults?.annual_goal ?? '')} onChange={event => field('annual_goal', event.target.value)} /></label>
       <label>Maximum historical drawdown (%)<input type="number" min="0.1" max="100" step="0.1" value={inputs.max_loss} placeholder={String(defaults?.max_loss ?? '')} onChange={event => field('max_loss', event.target.value)} /><small>Largest historical peak-to-trough fall you will accept.</small></label>
       <label>Maximum annualized volatility (%)<input type="number" min="0" max="300" step="0.1" value={inputs.max_volatility} placeholder={String(defaults?.max_volatility ?? '')} onChange={event => field('max_volatility', event.target.value)} /><small>Your cap on historical price variability.</small></label>
@@ -163,17 +178,37 @@ export default function Valuation({ market, symbol }: { market: string; symbol: 
       </div></details>
       <label>Your average buy price ({stock}, optional)<input type="number" min="0.0001" max="1000000000" step="any" required={!!inputs.shares} value={inputs.cost_basis} onChange={event => field('cost_basis', event.target.value)} /></label>
       <label>Shares you own (optional)<input type="number" min="0.000001" max="1000000000000" step="any" required={!!inputs.cost_basis} value={inputs.shares} onChange={event => field('shares', event.target.value)} /></label>
+      </div><p className="gain-small">Return goal and modeled downside loss apply to the long-term earnings screen. Historical drawdown and volatility limits remain visible in the current-market risk review.</p></details>
+      <div className="gain-planner"><h4>Plan a position before considering an entry</h4>
+      <p className="gain-small">Risk on a position means the budget you plan to lose between entry and an exit price. It is different from the stock's possible long-term decline.</p>
+      <div className="gain-controls">
+        <label>Amount to model ({base})<input type="number" min="0.01" max="1000000000000" step="0.01" value={inputs.amount} placeholder={String(data?.budget.amount || '')} onChange={event => field('amount', event.target.value)} /></label>
+        <label>Budget risk per idea (%)<input type="number" min="0.01" max="100" step="0.01" value={inputs.risk_budget} required={!!inputs.planned_stop || !!inputs.planned_target} onChange={event => field('risk_budget', event.target.value)} /><small>Percentage of this modeled budget, not verified portfolio equity.</small></label>
+        <label>Planned exit if price falls ({stock})<input type="number" min="0.0001" max="1000000000" step="any" value={inputs.planned_stop} required={!!inputs.risk_budget || !!inputs.planned_target} onChange={event => field('planned_stop', event.target.value)} /><small>Enter a level below the current price. Execution is not guaranteed.</small></label>
+        <label>Optional target price ({stock})<input type="number" min="0.0001" max="1000000000" step="any" value={inputs.planned_target} onChange={event => field('planned_target', event.target.value)} /><small>Your assumption, not an AI price forecast.</small></label>
+      </div>
+      {hasPlan && plan && planQuoteFresh ? <div className="position-result" data-testid="position-result">
+        {plan.status === 'review_required' && <div className="gain-negative"><strong>{plan.reason}</strong><ul>{plan.risk_conflicts?.map(conflict => <li key={conflict}>{conflict}</li>)}</ul></div>}
+        <p><strong>{plan.shares} whole shares</strong> · hypothetical position {money(plan.position_value, base)} · unallocated {money(plan.unallocated_budget, base)}.</p>
+        <p>Planned loss at your exit: <strong>{money(plan.planned_loss, base)}</strong> ({plan.planned_loss_percent}% of budget), against {money(plan.budget_risk_amount, base)} risk budget. The stock-to-exit distance is {plan.price_to_stop_percent}%.</p>
+        {plan.target_gain !== null && plan.target_gain !== undefined && <p>Gain if your target is reached: {money(plan.target_gain, base)} · reward/risk {plan.reward_to_risk}×, before costs.</p>}
+        {plan.shares === 0 && <p>Your entered budget and risk limit cannot fund one whole share at these levels.</p>}</div> : <p className="gain-small">{hasPlan ? 'The quote has passed your age limit. Refresh before using a position size.' : plan?.reason || 'Enter a budget-risk percentage and planned exit price, then apply.'}</p>}
+      {plan && <p className="gain-small">{plan.note}</p>}
+      </div>
+      <div className="gain-actions">
       <button className="outline" type="submit" disabled={loading}>Apply criteria</button>
       <button className="outline" type="button" disabled={loading} onClick={reset}>Reset to profile defaults</button>
+      </div>
     </form>
     <p className="gain-small">These controls apply to this stock screen. Blank limits use your profile defaults, except downside loss which follows your drawdown limit. Applying criteria recalculates the checklist; Research latest news reviews the same values. Changing criteria clears the previous news assessment.</p>
-    {dirty && <p className="gain-small" role="status">You have unapplied changes. Results below still use the last applied criteria; any previous buy-candidate signal is withheld.</p>}
     {error && <p role="alert" className="gain-negative">{error}{data ? ' Existing figures are from their displayed timestamps.' : ''}</p>}
     {loading && <p role="status">{researching ? 'Searching current company news and reviewing the evidence…' : 'Loading prices, annual earnings and historical returns…'}</p>}
     {data && <>
-      <p className="gain-small">Saved profile: <strong>{data.preferences.risk} risk · {data.preferences.horizon} years</strong>. Modeling {data.preferences.modeled_years} years{data.preferences.horizon === '5+' ? ' (five years for the 5+ preference)' : ''}.
+      <p className="gain-small">Saved profile: <strong>{data.preferences.risk} risk · {data.preferences.horizon} years</strong>. {view === 'valuation' ? `Earnings scenarios model ${data.preferences.modeled_years} years.` : 'Current-market indicators describe daily trends; they do not change your investment horizon.'}
         {' '}{data.preferences.screening_mode === 'custom' ? 'Custom screening limits applied.' : 'Profile defaults applied.'} A custom limit changes this screen; it does not change the saved risk label.</p>
-      <p className="gain-small" data-testid="applied-criteria"><strong>Applied criteria:</strong> annual goal {data.preferences.annual_return_goal_percent}%; maximum historical drawdown {data.preferences.max_loss_percent}%; annualized volatility {data.preferences.max_volatility_percent}%; modeled downside loss {data.preferences.max_downside_percent}%; minimum history {data.preferences.min_history_years} years ({data.preferences.required_history_years} required including the holding period); quote age {data.preferences.max_quote_age_minutes} minutes; return over benchmark at least {data.preferences.min_excess_return_percentage_points} points/year. These are screening limits, not promised outcomes.</p>
+      <p className="gain-small" data-testid="applied-criteria"><strong>Applied {view === 'market' ? 'current-market risk limits' : 'criteria'}:</strong> maximum historical drawdown {data.preferences.max_loss_percent}%; annualized volatility {data.preferences.max_volatility_percent}%; quote age {data.preferences.max_quote_age_minutes} minutes.
+        {view === 'valuation' && <> Annual goal {data.preferences.annual_return_goal_percent}%; modeled downside loss {data.preferences.max_downside_percent}%; minimum history {data.preferences.min_history_years} years ({data.preferences.required_history_years} required including the holding period); return over benchmark at least {data.preferences.min_excess_return_percentage_points} points/year.</>} These are screening limits, not promised outcomes.</p>
+      {view === 'valuation' && <>
       <div className="gain-grid">
         <div className="gain-card"><span>Latest provider price</span><strong>{money(data.quote?.current, stock)}</strong><small>{data.quote_validation.status.replaceAll('_', ' ')} · {data.quote?.timestamp ? new Date(data.quote.timestamp * 1000).toLocaleString() : 'Timestamp unavailable'}</small></div>
         <div className="gain-card"><span>Historical annualized return</span><strong className={tone(history?.cagr_percent)}>{pct(history?.cagr_percent)}</strong><small>{history?.start} to {history?.as_of}; {history?.years_available ?? 0} years</small></div>
@@ -182,7 +217,7 @@ export default function Valuation({ market, symbol }: { market: string; symbol: 
       </div>
       <p className="gain-small">{data.quote_validation.reason} Prices refresh every 60 seconds while this tab is visible. News research runs when requested.</p>
       {assessment && <div className={`buy-assessment ${assessment.verdict === 'BUY CANDIDATE' ? 'candidate' : ''}`}>
-        <div className="gain-row"><div><span className="gain-small">DOES IT FIT A PURCHASE?</span><h3>{assessment.verdict}</h3></div>
+        <div className="gain-row"><div><span className="gain-small">LONG-TERM EARNINGS SCREEN</span><h3>{assessment.verdict}</h3></div>
           <button className="outline" type="button" disabled={loading} onClick={() => apply(true)}><Search size={16} />{researching ? 'Researching…' : 'Research latest news'}</button></div>
         <p>{assessment.reason}</p>
         {assessment.quantitative_candidate && assessment.research_required && <p>The quantitative screen passes. Current cited news still needs review before a buy-candidate signal is available.</p>}
@@ -210,12 +245,14 @@ export default function Valuation({ market, symbol }: { market: string; symbol: 
           <p className="gain-small">{history.rolling_history?.sample_count} overlapping monthly-start windows; approximately {history.rolling_history?.independent_periods_approx} independent holding periods. {history.rolling_history?.positive_windows_percent}% of those historical windows were positive. This is not a future probability. {history.rolling_history?.warning}</p>
         </>}
       </>}
+      </>}
       <h3 className="gain-section-title">Current company research</h3>
       {web && <div className="gain-details">
         <p className="gain-small">{web.note}{web.retrieved_at ? ` Retrieved ${new Date(web.retrieved_at).toLocaleString()}.` : ''}</p>
         {web.status === 'available' && <p style={{ whiteSpace: 'pre-wrap' }}>{web.segments.map((segment, index) => segment.url ? <a key={index} href={segment.url} target="_blank" rel="noopener noreferrer">{segment.text}</a> : <span key={index}>{segment.text}</span>)}</p>}
       </div>}
       {matchingReview && !expired && review?.buy_assessment.narrative && <>
+        <p className="gain-small">News review under the long-term screening criteria: <strong>{review.buy_assessment.verdict}</strong>. This review is separate from the observed price trend.</p>
         <div className="gain-grid two"><div className="gain-card"><TrendingUp size={22} /><h4>Bull case</h4><p>{review.buy_assessment.narrative.bull_case}</p></div><div className="gain-card"><ShieldAlert size={22} /><h4>Bear case</h4><p>{review.buy_assessment.narrative.bear_case}</p></div></div>
         <p><strong>Next step:</strong> {review.buy_assessment.narrative.next_step}</p>
         <ul>{review.buy_assessment.narrative.events.map((event, index) => <li key={index}>{event.event_date} · {event.description} <a href={event.source_url} target="_blank" rel="noopener noreferrer">Source</a></li>)}</ul>

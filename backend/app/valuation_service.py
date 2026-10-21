@@ -7,6 +7,7 @@ import yfinance as yf
 
 from .data_utils import finite_number, normalize_symbol, safe_url, ttl_cache
 from .gain_valuation import HORIZON_YEARS, build_gain_view
+from .market_setup import build_market_setup
 from .price_history import get_price_history, get_fx_rate, historical_performance
 from .research_service import collect_snapshot
 
@@ -77,4 +78,7 @@ def valuation_snapshot(market, symbol, profile, **options):
     if data['history'] and currency != data['history'].get('currency'):
         history = {'status': 'insufficient', 'reason': 'Price-history currency does not match the current quote', 'returns': [], 'chart': []}
     snapshot['warnings'].extend(warnings)
-    return build_gain_view(snapshot, history, profile, fx, **options)
+    result = build_gain_view(snapshot, history, profile, fx, **options)
+    result['market_setup'] = build_market_setup(data['history'], data['benchmark'], snapshot.get('quote'),
+                                               result['preferences'], result['buy_assessment']['checks'], market=market)
+    return result

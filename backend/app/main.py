@@ -218,11 +218,18 @@ class ValuationOptions(BaseModel):
     min_excess_return: float | None = Field(default=None, ge=-100, le=100, allow_inf_nan=False)
     cost_basis: float | None = Field(default=None, gt=0, le=1_000_000_000, allow_inf_nan=False)
     shares: float | None = Field(default=None, gt=0, le=1_000_000_000_000, allow_inf_nan=False)
+    risk_budget: float | None = Field(default=None, gt=0, le=100, allow_inf_nan=False)
+    planned_stop: float | None = Field(default=None, gt=0, le=1_000_000_000, allow_inf_nan=False)
+    planned_target: float | None = Field(default=None, gt=0, le=1_000_000_000, allow_inf_nan=False)
 
     @model_validator(mode='after')
     def paired_position(self):
         if (self.cost_basis is None) != (self.shares is None):
             raise ValueError('Supply both average buy price and shares owned to calculate unrealized gains')
+        if (self.risk_budget is None) != (self.planned_stop is None):
+            raise ValueError('Supply both budget-risk percentage and planned exit price')
+        if self.planned_target is not None and self.planned_stop is None:
+            raise ValueError('A target requires a budget-risk percentage and planned exit price')
         return self
 
 
@@ -249,13 +256,19 @@ def stock_valuation(
     min_excess_return: float | None = Query(default=None, ge=-100, le=100, allow_inf_nan=False),
     cost_basis: float | None = Query(default=None, gt=0, le=1_000_000_000, allow_inf_nan=False),
     shares: float | None = Query(default=None, gt=0, le=1_000_000_000_000, allow_inf_nan=False),
+    risk_budget: float | None = Query(default=None, gt=0, le=100, allow_inf_nan=False),
+    planned_stop: float | None = Query(default=None, gt=0, le=1_000_000_000, allow_inf_nan=False),
+    planned_target: float | None = Query(default=None, gt=0, le=1_000_000_000, allow_inf_nan=False),
 ):
     if (cost_basis is None) != (shares is None):
         raise HTTPException(422, 'Supply both average buy price and shares owned')
+    if (risk_budget is None) != (planned_stop is None) or (planned_target is not None and planned_stop is None):
+        raise HTTPException(422, 'Supply both budget-risk percentage and planned exit price before an optional target')
     options = ValuationOptions(amount=amount, annual_goal=annual_goal, max_loss=max_loss,
                                max_volatility=max_volatility, max_downside=max_downside,
                                min_history_years=min_history_years, max_quote_age_minutes=max_quote_age_minutes,
-                               min_excess_return=min_excess_return, cost_basis=cost_basis, shares=shares)
+                               min_excess_return=min_excess_return, cost_basis=cost_basis, shares=shares,
+                               risk_budget=risk_budget, planned_stop=planned_stop, planned_target=planned_target)
     return valuation_result(market, symbol, options)
 
 
