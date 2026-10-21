@@ -14,7 +14,10 @@ type ValuationData = {
   quote: { current: number; currency: string; timestamp: number | null } | null;
   quote_validation: { status: string; valid: boolean; reason: string };
   preferences: { amount: number | string; currency: string; risk: string; horizon: string; modeled_years: number;
-    annual_return_goal_percent: number; max_loss_percent: number; screening_note: string };
+    annual_return_goal_percent: number; max_loss_percent: number; max_volatility_percent: number; max_downside_percent: number;
+    min_history_years: number; required_history_years: number; max_quote_age_minutes: number;
+    min_excess_return_percentage_points: number; screening_key: string; screening_mode: string;
+    screening_defaults: Record<ScreeningInput, number>; screening_note: string };
   budget: { amount: number; base_currency: string; stock_currency: string | null; hypothetical_fractional_shares: number | null;
     fx: { rate: number; as_of: string | null; provider: string } | null; fx_note: string };
   historical: { status: string; currency?: string; reason?: string; as_of?: string; start?: string; years_available?: number; definition?: string;
@@ -29,8 +32,11 @@ type ValuationData = {
   buy_assessment: Verdict; sources: { title: string; url: string; published_at: number; source: string }[];
   warnings: string[]; web_research: Research; disclaimer: string;
 };
-type Inputs = { amount: string; annual_goal: string; max_loss: string; cost_basis: string; shares: string };
+type ScreeningInput = 'annual_goal' | 'max_loss' | 'max_volatility' | 'max_downside' | 'min_history_years' | 'max_quote_age_minutes' | 'min_excess_return';
+type Inputs = Record<ScreeningInput | 'amount' | 'cost_basis' | 'shares', string>;
 type Options = Partial<Record<keyof Inputs, number>>;
+const emptyInputs: Inputs = { amount: '', annual_goal: '', max_loss: '', max_volatility: '', max_downside: '',
+  min_history_years: '', max_quote_age_minutes: '', min_excess_return: '', cost_basis: '', shares: '' };
 const money = (value: number | null | undefined, currency: string) => typeof value === 'number' && Number.isFinite(value)
   ? new Intl.NumberFormat('en-CA', { style: 'currency', currency, maximumFractionDigits: 2 }).format(value) : 'Unavailable';
 const pct = (value: number | null | undefined) => typeof value === 'number' ? `${value > 0 ? '+' : ''}${value.toFixed(1)}%` : 'Unavailable';
@@ -61,7 +67,7 @@ function HistoryChart({ points }: { points: { date: string; growth_of_100: numbe
 export default function Valuation({ market, symbol }: { market: string; symbol: string }) {
   const [data, setData] = useState<ValuationData | null>(null);
   const [review, setReview] = useState<ValuationData | null>(null);
-  const [inputs, setInputs] = useState<Inputs>({ amount: '', annual_goal: '', max_loss: '', cost_basis: '', shares: '' });
+  const [inputs, setInputs] = useState<Inputs>(emptyInputs);
   const [dirty, setDirty] = useState(false);
   const [loading, setLoading] = useState(true);
   const [researching, setResearching] = useState(false);
@@ -103,7 +109,7 @@ export default function Valuation({ market, symbol }: { market: string; symbol: 
   }, [market, symbol]);
 
   useEffect(() => {
-    setData(null); setReview(null); applied.current = {};
+    setData(null); setReview(null); setInputs(emptyInputs); setDirty(false); applied.current = {};
     void load({});
     const timer = setInterval(() => {
       setNow(Date.now());
@@ -117,20 +123,27 @@ export default function Valuation({ market, symbol }: { market: string; symbol: 
     const options = Object.fromEntries(Object.entries(inputs).filter(([, value]) => value !== '').map(([key, value]) => [key, Number(value)])) as Options;
     applied.current = options;
     setDirty(false);
-    if (!research) setReview(null);
+    setReview(null);
     void load(options, research);
   }
   function field(key: keyof Inputs, value: string) { setInputs(current => ({ ...current, [key]: value })); setDirty(true); }
+  function reset() {
+    setInputs(emptyInputs); setDirty(false); setReview(null); applied.current = {};
+    void load({});
+  }
 
   const base = data?.budget.base_currency || 'CAD';
   const stock = data?.budget.stock_currency || 'USD';
   const history = data?.historical;
-  const matchingReview = review && data && review.preferences.risk === data.preferences.risk && review.preferences.horizon === data.preferences.horizon
-    && review.preferences.annual_return_goal_percent === data.preferences.annual_return_goal_percent && review.preferences.max_loss_percent === data.preferences.max_loss_percent;
+  const defaults = data?.preferences.screening_defaults;
+  const matchingReview = !dirty && review && data && !!data.preferences.screening_key
+    && review.preferences.screening_key === data.preferences.screening_key;
   const expired = !!review && now - new Date(review.generated_at).getTime() > 15 * 60_000;
   let assessment = matchingReview && !expired ? review!.buy_assessment : data?.buy_assessment;
-  if (assessment?.verdict === 'BUY CANDIDATE' && !data?.buy_assessment.quantitative_candidate) {
-    assessment = { ...data!.buy_assessment, verdict: 'WAIT', reason: 'The current price or screening inputs no longer pass. Refresh the web review before considering an entry.' };
+  if (assessment?.verdict === 'BUY CANDIDATE' && (!matchingReview || expired || !data?.buy_assessment.quantitative_candidate)) {
+    assessment = { ...data!.buy_assessment, verdict: 'WAIT', research_required: true,
+      reason: dirty ? 'You have edited the criteria. Apply them and request a fresh news review to assess a buy candidate.'
+        : 'The news review has expired or the current price or screening inputs no longer pass. Refresh the web review before considering an entry.' };
   }
   const web = review?.web_research;
 
@@ -139,18 +152,28 @@ export default function Valuation({ market, symbol }: { market: string; symbol: 
       <button className="outline" type="button" disabled={loading} onClick={() => void load(applied.current)}><RefreshCw size={16} /> Refresh prices</button></div>
     <form ref={form} className="gain-controls" onSubmit={event => { event.preventDefault(); apply(); }}>
       <label>Amount to model ({base})<input type="number" min="0.01" max="1000000000000" step="0.01" value={inputs.amount} placeholder={String(data?.budget.amount || '')} onChange={event => field('amount', event.target.value)} /></label>
-      <label>Annual return goal (%)<input type="number" min="0.1" max="100" step="0.1" value={inputs.annual_goal} placeholder={String(data?.preferences.annual_return_goal_percent || '')} onChange={event => field('annual_goal', event.target.value)} /></label>
-      <label>Maximum tolerable loss (%)<input type="number" min="0.1" max="100" step="0.1" value={inputs.max_loss} placeholder={String(data?.preferences.max_loss_percent || '')} onChange={event => field('max_loss', event.target.value)} /></label>
+      <label>Annual return goal (%)<input type="number" min="0.1" max="100" step="0.1" value={inputs.annual_goal} placeholder={String(defaults?.annual_goal ?? '')} onChange={event => field('annual_goal', event.target.value)} /></label>
+      <label>Maximum historical drawdown (%)<input type="number" min="0.1" max="100" step="0.1" value={inputs.max_loss} placeholder={String(defaults?.max_loss ?? '')} onChange={event => field('max_loss', event.target.value)} /><small>Largest historical peak-to-trough fall you will accept.</small></label>
+      <label>Maximum annualized volatility (%)<input type="number" min="0" max="300" step="0.1" value={inputs.max_volatility} placeholder={String(defaults?.max_volatility ?? '')} onChange={event => field('max_volatility', event.target.value)} /><small>Your cap on historical price variability.</small></label>
+      <label>Maximum modeled downside loss (%)<input type="number" min="0" max="100" step="0.1" value={inputs.max_downside} placeholder={inputs.max_loss || String(defaults?.max_downside ?? '')} onChange={event => field('max_downside', event.target.value)} /><small>Loss at the end of the downside scenario. Blank follows your drawdown limit.</small></label>
+      <details className="gain-advanced"><summary>More screening criteria</summary><div className="gain-controls">
+        <label>Minimum history (years)<input type="number" min="1" max="10" step="1" value={inputs.min_history_years} placeholder={String(defaults?.min_history_years ?? '')} onChange={event => field('min_history_years', event.target.value)} /><small>Must also cover your modeled holding period.</small></label>
+        <label>Maximum trade quote age (minutes)<input type="number" min="1" max="60" step="1" value={inputs.max_quote_age_minutes} placeholder={String(defaults?.max_quote_age_minutes ?? '')} onChange={event => field('max_quote_age_minutes', event.target.value)} /><small>A provider trade timestamp is required; daily bars do not qualify.</small></label>
+        <label>Minimum return over benchmark (points/year)<input type="number" min="-100" max="100" step="0.1" value={inputs.min_excess_return} placeholder={String(defaults?.min_excess_return ?? '')} onChange={event => field('min_excess_return', event.target.value)} /><small>Annual stock return minus market ETF return, on matching dates.</small></label>
+      </div></details>
       <label>Your average buy price ({stock}, optional)<input type="number" min="0.0001" max="1000000000" step="any" required={!!inputs.shares} value={inputs.cost_basis} onChange={event => field('cost_basis', event.target.value)} /></label>
       <label>Shares you own (optional)<input type="number" min="0.000001" max="1000000000000" step="any" required={!!inputs.cost_basis} value={inputs.shares} onChange={event => field('shares', event.target.value)} /></label>
-      <button className="outline" type="submit" disabled={loading}>Apply goals</button>
+      <button className="outline" type="submit" disabled={loading}>Apply criteria</button>
+      <button className="outline" type="button" disabled={loading} onClick={reset}>Reset to profile defaults</button>
     </form>
-    {dirty && <p className="gain-small" role="status">Apply your changes to update the figures below.</p>}
+    <p className="gain-small">These controls apply to this stock screen. Blank limits use your profile defaults, except downside loss which follows your drawdown limit. Applying criteria recalculates the checklist; Research latest news reviews the same values. Changing criteria clears the previous news assessment.</p>
+    {dirty && <p className="gain-small" role="status">You have unapplied changes. Results below still use the last applied criteria; any previous buy-candidate signal is withheld.</p>}
     {error && <p role="alert" className="gain-negative">{error}{data ? ' Existing figures are from their displayed timestamps.' : ''}</p>}
     {loading && <p role="status">{researching ? 'Searching current company news and reviewing the evidence…' : 'Loading prices, annual earnings and historical returns…'}</p>}
     {data && <>
       <p className="gain-small">Saved profile: <strong>{data.preferences.risk} risk · {data.preferences.horizon} years</strong>. Modeling {data.preferences.modeled_years} years{data.preferences.horizon === '5+' ? ' (five years for the 5+ preference)' : ''}.
-        {' '}Goal: {data.preferences.annual_return_goal_percent}% per year; loss limit: {data.preferences.max_loss_percent}%. These are screening goals, not promised returns.</p>
+        {' '}{data.preferences.screening_mode === 'custom' ? 'Custom screening limits applied.' : 'Profile defaults applied.'} A custom limit changes this screen; it does not change the saved risk label.</p>
+      <p className="gain-small" data-testid="applied-criteria"><strong>Applied criteria:</strong> annual goal {data.preferences.annual_return_goal_percent}%; maximum historical drawdown {data.preferences.max_loss_percent}%; annualized volatility {data.preferences.max_volatility_percent}%; modeled downside loss {data.preferences.max_downside_percent}%; minimum history {data.preferences.min_history_years} years ({data.preferences.required_history_years} required including the holding period); quote age {data.preferences.max_quote_age_minutes} minutes; return over benchmark at least {data.preferences.min_excess_return_percentage_points} points/year. These are screening limits, not promised outcomes.</p>
       <div className="gain-grid">
         <div className="gain-card"><span>Latest provider price</span><strong>{money(data.quote?.current, stock)}</strong><small>{data.quote_validation.status.replaceAll('_', ' ')} · {data.quote?.timestamp ? new Date(data.quote.timestamp * 1000).toLocaleString() : 'Timestamp unavailable'}</small></div>
         <div className="gain-card"><span>Historical annualized return</span><strong className={tone(history?.cagr_percent)}>{pct(history?.cagr_percent)}</strong><small>{history?.start} to {history?.as_of}; {history?.years_available ?? 0} years</small></div>
@@ -192,7 +215,7 @@ export default function Valuation({ market, symbol }: { market: string; symbol: 
         <p className="gain-small">{web.note}{web.retrieved_at ? ` Retrieved ${new Date(web.retrieved_at).toLocaleString()}.` : ''}</p>
         {web.status === 'available' && <p style={{ whiteSpace: 'pre-wrap' }}>{web.segments.map((segment, index) => segment.url ? <a key={index} href={segment.url} target="_blank" rel="noopener noreferrer">{segment.text}</a> : <span key={index}>{segment.text}</span>)}</p>}
       </div>}
-      {matchingReview && review?.buy_assessment.narrative && <>
+      {matchingReview && !expired && review?.buy_assessment.narrative && <>
         <div className="gain-grid two"><div className="gain-card"><TrendingUp size={22} /><h4>Bull case</h4><p>{review.buy_assessment.narrative.bull_case}</p></div><div className="gain-card"><ShieldAlert size={22} /><h4>Bear case</h4><p>{review.buy_assessment.narrative.bear_case}</p></div></div>
         <p><strong>Next step:</strong> {review.buy_assessment.narrative.next_step}</p>
         <ul>{review.buy_assessment.narrative.events.map((event, index) => <li key={index}>{event.event_date} · {event.description} <a href={event.source_url} target="_blank" rel="noopener noreferrer">Source</a></li>)}</ul>

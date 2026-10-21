@@ -46,6 +46,8 @@ Tests use temporary SQLite databases and mocked providers; they do not call paid
 
 See [the valuation guide](docs/VALUATION.md) for preference-based gains, historical replays and cited web assessments. The original SEC endpoint is now `/api/cash-flow-valuation/{market}/{symbol}`.
 
+In **Valuation**, set your own return goal, historical drawdown, volatility and modeled downside limits. Expand **More screening criteria** for history coverage, trade quote age and benchmark return requirements. **Apply criteria** updates the checklist; **Research latest news** reviews those same values. The applied limits are displayed together, and changing them clears the previous news review. These overrides apply to the current stock screen; **Reset to profile defaults** restores your saved profile's starting limits.
+
 See [the code review](docs/CODE_REVIEW.md) for resolved issues and remaining work. Live NVIDIA price/history/FX/news retrieval and web search have been smoke-tested locally. Provider entitlements and investment performance must be evaluated separately.
 
 ## Remaining work

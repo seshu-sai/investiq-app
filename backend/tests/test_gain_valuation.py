@@ -161,7 +161,7 @@ def review_payload(verdict='WAIT'):
                 {'event_date': date.today().isoformat(), 'description': 'Results covered', 'impact': 'unclear', 'source_url': 'https://news.test/report'}]}
 
 
-def mock_web(monkeypatch, output):
+def mock_web(monkeypatch, output, calls=None):
     from app import web_research
     monkeypatch.setenv('OPENAI_API_KEY', 'test-key')
     class Client:
@@ -169,6 +169,7 @@ def mock_web(monkeypatch, output):
         def __enter__(self): return self
         def __exit__(self, *a): return False
         def create(self, **kw):
+            if calls is not None: calls.append(kw)
             assert kw['store'] is False
             if 'tools' in kw:
                 assert kw['tools'] == [{'type': 'web_search'}]
@@ -280,3 +281,143 @@ def test_markdown_source_annotations_use_readable_inline_labels():
 
 def test_web_payload_rejects_boolean_amount_before_providers(client):
     assert client.post('/api/valuation/US/TEST/research', json={'amount': True}).status_code == 422
+
+
+def checks(view):
+    return {row['label']: row for row in view['buy_assessment']['checks']}
+
+
+def test_custom_limits_override_low_risk_presets_in_both_checks_and_verdict(gain_sample):
+    gain_sample['profile']['risk'] = 'low'
+    gain_sample['history'].update(annualized_volatility_percent=42.41, max_drawdown_percent=-53.3)
+    default = gain_view(gain_sample, annual_goal=1, max_loss=60)
+    assert not checks(default)['Risk profile']['passed']
+    assert default['buy_assessment']['verdict'] == 'NOT SUITABLE'
+    custom = gain_view(gain_sample, annual_goal=1, max_loss=60, max_volatility=45)
+    assert checks(custom)['Risk profile']['passed']
+    assert custom['buy_assessment']['quantitative_candidate']
+    assert custom['buy_assessment']['verdict'] == 'WAIT'
+    assert custom['preferences']['risk'] == 'low'
+    assert custom['preferences']['max_volatility_percent'] == 45
+    assert '45%' in checks(custom)['Risk profile']['detail']
+
+
+def test_downside_limit_is_separate_from_historical_drawdown(gain_sample):
+    strict = gain_view(gain_sample, max_loss=60, max_downside=10)
+    loose = gain_view(gain_sample, max_loss=60, max_downside=25)
+    assert checks(strict)['Loss tolerance']['passed']
+    assert not checks(strict)['Downside sensitivity']['passed']
+    assert checks(loose)['Downside sensitivity']['passed']
+    assert strict['valuation']['scenarios'] == loose['valuation']['scenarios']
+    assert gain_view(gain_sample, max_loss=60)['preferences']['max_downside_percent'] == 60
+
+
+@pytest.mark.parametrize('field,limit,label', [
+    ('max_volatility', 19, 'Risk profile'), ('min_history_years', 10, 'Historical coverage'),
+    ('min_excess_return', 4, 'Benchmark comparison'),
+])
+def test_custom_criteria_can_make_a_previously_passing_screen_fail(gain_sample, field, limit, label):
+    gain_sample['history']['years_available'] = 8
+    assert gain_view(gain_sample)['buy_assessment']['quantitative_candidate']
+    result = gain_view(gain_sample, **{field: limit})
+    assert not checks(result)[label]['passed']
+    assert not result['buy_assessment']['quantitative_candidate']
+
+
+def test_minimum_history_cannot_shorten_the_modeled_holding_period(gain_sample):
+    gain_sample['history']['years_available'] = 4
+    result = gain_view(gain_sample, min_history_years=1)
+    assert result['preferences']['required_history_years'] == 5
+    assert not checks(result)['Historical coverage']['passed']
+    gain_sample['profile']['horizon'] = '1-3'
+    assert checks(gain_view(gain_sample, min_history_years=1))['Historical coverage']['passed']
+
+
+def test_custom_quote_age_controls_trade_gate_but_never_allows_daily_bars(gain_sample):
+    gain_sample['quote']['timestamp'] = datetime.now(timezone.utc).timestamp() - 25 * 60
+    assert not checks(gain_view(gain_sample))['Recent trade timestamp']['passed']
+    assert checks(gain_view(gain_sample, max_quote_age_minutes=30))['Recent trade timestamp']['passed']
+    gain_sample['quote']['price_type'] = 'daily_bar'
+    assert not checks(gain_view(gain_sample, max_quote_age_minutes=60))['Recent trade timestamp']['passed']
+    gain_sample['quote']['price_type'] = 'provider_quote'
+    gain_sample['quote']['timestamp'] += 2 * 3600
+    assert not checks(gain_view(gain_sample, max_quote_age_minutes=60))['Recent trade timestamp']['passed']
+
+
+def test_zero_limits_are_applied_and_benchmark_minimum_is_inclusive(gain_sample):
+    result = gain_view(gain_sample, max_volatility=0, max_downside=0, min_excess_return=3)
+    assert result['preferences']['max_volatility_percent'] == 0
+    assert result['preferences']['max_downside_percent'] == 0
+    assert not checks(result)['Risk profile']['passed']
+    assert not checks(result)['Downside sensitivity']['passed']
+    assert checks(result)['Benchmark comparison']['passed']
+    gain_sample['history']['benchmark']['excess_cagr_percentage_points'] = -2
+    assert checks(gain_view(gain_sample, min_excess_return=-2))['Benchmark comparison']['passed']
+
+
+@pytest.mark.parametrize('override', [
+    {'annual_goal': 7}, {'max_loss': 60}, {'max_volatility': 50}, {'max_downside': 10},
+    {'min_history_years': 6}, {'max_quote_age_minutes': 30}, {'min_excess_return': -1},
+])
+def test_every_applied_limit_changes_review_identity(gain_sample, override):
+    assert gain_view(gain_sample)['preferences']['screening_key'] != gain_view(gain_sample, **override)['preferences']['screening_key']
+
+
+def test_review_identity_uses_resolved_limits_and_stock(gain_sample):
+    baseline = gain_view(gain_sample)
+    assert baseline['preferences']['screening_mode'] == 'profile_defaults'
+    resolved = baseline['preferences']['applied_screening']
+    assert resolved == baseline['preferences']['screening_defaults']
+    assert baseline['preferences']['screening_key'] == gain_view(gain_sample, **resolved)['preferences']['screening_key']
+    gain_sample['snapshot']['symbol'] = 'OTHER'
+    assert baseline['preferences']['screening_key'] != gain_view(gain_sample)['preferences']['screening_key']
+
+
+def test_web_review_receives_custom_limits_and_can_accept_override(monkeypatch, gain_sample):
+    gain_sample['profile']['risk'] = 'low'
+    gain_sample['history']['annualized_volatility_percent'] = 42.41
+    calls = []
+    mock_web(monkeypatch, review_payload('BUY CANDIDATE'), calls)
+    view = gain_view(gain_sample, max_loss=60, max_volatility=45, max_downside=25)
+    result = research_valuation(view)
+    evidence = json.loads(calls[1]['input'])
+    assert evidence['preferences']['applied_screening']['max_volatility'] == 45
+    assert evidence['preferences']['applied_screening']['max_downside'] == 25
+    assert evidence['preferences']['risk'] == 'low'
+    assert all(row['passed'] for row in evidence['buy_assessment']['checks'])
+    assert 'BUY CANDIDATE' in evidence['allowed_verdicts']
+    assert result['buy_assessment']['verdict'] == 'BUY CANDIDATE'
+
+
+@pytest.mark.parametrize('method', ['get', 'post'])
+def test_all_criteria_reach_api_calculation_and_research_audit(client, monkeypatch, gain_sample, method):
+    from app import valuation_service
+    overrides = {'annual_goal': 1, 'max_loss': 60, 'max_volatility': 45, 'max_downside': 25,
+                 'min_history_years': 6, 'max_quote_age_minutes': 30, 'min_excess_return': 2}
+    def snapshot(market, symbol, profile, **options):
+        assert options == overrides
+        return build_gain_view(gain_sample['snapshot'], gain_sample['history'], profile, gain_sample['fx'], **options)
+    monkeypatch.setattr(valuation_service, 'valuation_snapshot', snapshot)
+    if method == 'get':
+        response = client.get('/api/valuation/US/TEST', params=overrides)
+    else:
+        response = client.post('/api/valuation/US/TEST/research', json=overrides)
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body['preferences']['applied_screening'] == overrides
+    if method == 'post':
+        run = client.get('/api/analysis-history/US/TEST').json()[0]
+        assert run['snapshot']['profile']['applied_screening'] == overrides
+        assert run['snapshot']['valuation']['preferences']['screening_key'] == body['preferences']['screening_key']
+
+
+@pytest.mark.parametrize('name,value', [
+    ('max_volatility', -1), ('max_volatility', 301), ('max_volatility', 'nan'),
+    ('max_downside', -1), ('max_downside', 101), ('min_history_years', 0),
+    ('min_history_years', 11), ('min_history_years', 2.5),
+    ('max_quote_age_minutes', 0), ('max_quote_age_minutes', 61), ('max_quote_age_minutes', 1.5),
+    ('min_excess_return', -101), ('min_excess_return', 101),
+])
+def test_invalid_custom_limits_rejected_for_get_and_research(client, name, value):
+    assert client.get('/api/valuation/US/TEST', params={name: value}).status_code == 422
+    assert client.post('/api/valuation/US/TEST/research', json={name: value}).status_code == 422

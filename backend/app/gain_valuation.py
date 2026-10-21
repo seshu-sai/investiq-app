@@ -1,6 +1,8 @@
 """Preference-based earnings sensitivities and transparent research screening."""
 from datetime import date, datetime, timezone
 import math
+import hashlib
+import json
 from statistics import median
 
 from .data_utils import finite_number
@@ -56,14 +58,35 @@ def earnings_scenarios(fundamentals, financials, price, years, annual_goal):
             'limitations': 'Sensitivity calculations, not calibrated predictions or intrinsic values. No dividends, taxes, trading/FX fees or future currency moves. Historical EPS may be restated or affected by splits. A terminal loss limit is not a stop-loss or an interim drawdown limit.'}
 
 
-def build_gain_view(snapshot, history, profile, fx, *, annual_goal=None, max_loss=None, cost_basis=None, shares=None):
+def build_gain_view(snapshot, history, profile, fx, *, annual_goal=None, max_loss=None,
+                    max_volatility=None, max_downside=None, min_history_years=None,
+                    max_quote_age_minutes=None, min_excess_return=None, cost_basis=None, shares=None):
     from .advisor import assess_evidence
     from .price_validation import validate_market_quote
     risk = profile.get('risk', 'medium')
     limits = RISK_LIMITS.get(risk, RISK_LIMITS['medium'])
     goal = annual_goal if annual_goal is not None else limits['goal']
     loss = max_loss if max_loss is not None else limits['loss']
+    volatility_limit = max_volatility if max_volatility is not None else limits['volatility']
+    downside_limit = max_downside if max_downside is not None else loss
+    minimum_history = min_history_years if min_history_years is not None else 3
+    quote_age_limit = max_quote_age_minutes if max_quote_age_minutes is not None else 15
+    excess_return_limit = min_excess_return if min_excess_return is not None else 0
     years = HORIZON_YEARS.get(profile.get('horizon'), 4)
+    criteria = {'annual_goal': float(goal), 'max_loss': float(loss),
+                'max_volatility': float(volatility_limit), 'max_downside': float(downside_limit),
+                'min_history_years': int(minimum_history), 'max_quote_age_minutes': int(quote_age_limit),
+                'min_excess_return': float(excess_return_limit)}
+    defaults = {'annual_goal': limits['goal'], 'max_loss': limits['loss'],
+                'max_volatility': limits['volatility'], 'max_downside': limits['loss'],
+                'min_history_years': 3, 'max_quote_age_minutes': 15, 'min_excess_return': 0}
+    context = {'market': snapshot['market'], 'symbol': snapshot['symbol'],
+               'criteria': criteria, 'risk': risk, 'horizon': profile.get('horizon'),
+               'currency': profile.get('currency'), 'amount': float(profile['amount']),
+               'markets': sorted(profile.get('markets', [])), 'assets': sorted(profile.get('assets', []))}
+    screening_key = hashlib.sha256(json.dumps(context, sort_keys=True).encode()).hexdigest()
+    custom = any(value is not None for value in (annual_goal, max_loss, max_volatility, max_downside,
+                                                min_history_years, max_quote_age_minutes, min_excess_return))
     quote = validate_market_quote(snapshot.get('quote'))
     assessment = assess_evidence(snapshot['market'], snapshot['symbol'], snapshot['fundamentals'],
                                  snapshot['historical_financials'], snapshot.get('quote'), profile)
@@ -99,17 +122,17 @@ def build_gain_view(snapshot, history, profile, fx, *, annual_goal=None, max_los
     def check(label, passed, detail):
         checks.append({'label': label, 'passed': bool(passed), 'detail': detail})
     check('Usable price', quote['valid'], quote['reason'])
-    check('Recent trade timestamp', quote['valid'] and quote.get('age_seconds', 1e9) <= 900 and (snapshot.get('quote') or {}).get('price_type') != 'daily_bar',
-          'A buy candidate requires a provider trade timestamp within 15 minutes; daily bars do not qualify.')
+    check('Recent trade timestamp', quote['valid'] and quote.get('age_seconds', 1e9) <= quote_age_limit * 60 and (snapshot.get('quote') or {}).get('price_type') != 'daily_bar',
+          f'A buy candidate requires a provider trade timestamp within your {quote_age_limit} minute limit; daily bars do not qualify.')
     check('Financial evidence', not assessment['missing_data'], '; '.join(assessment['missing_data']) or 'Three consecutive recent annual periods available.')
-    check('Historical coverage', history.get('status') == 'available' and history.get('years_available', 0) >= max(3, years),
-          'At least three years and the modeled holding period are required.')
+    check('Historical coverage', history.get('status') == 'available' and history.get('years_available', 0) >= max(minimum_history, years),
+          f'Your minimum is {minimum_history} years; the {years}-year modeled holding period also requires coverage. Required: {max(minimum_history, years)} years.')
     drawdown = abs(history.get('max_drawdown_percent') or 0)
     volatility = history.get('annualized_volatility_percent')
     check('Loss tolerance', history.get('status') == 'available' and drawdown <= loss,
           f'Observed maximum drawdown {drawdown:.1f}% versus your {loss:g}% loss limit. Future losses can be worse.')
-    check('Risk profile', volatility is not None and volatility <= limits['volatility'],
-          f'Historical annualized volatility {volatility if volatility is not None else "unknown"}% versus the {limits["volatility"]}% screening limit for {risk} risk.')
+    check('Risk profile', volatility is not None and volatility <= volatility_limit,
+          f'Historical annualized volatility {volatility if volatility is not None else "unknown"}% versus your {volatility_limit:g}% volatility limit. Saved risk label: {risk}.')
     fit = profile.get('horizon') != '0-1' and snapshot['market'] in profile.get('markets', []) and 'stocks' in profile.get('assets', [])
     check('Preference fit', fit, 'Individual stock must match saved markets/assets and a horizon longer than one year.')
     check('Earnings valuation', valuation['status'] == 'illustrative', valuation.get('reason') or 'Positive dated earnings and explicit growth/multiple assumptions available.')
@@ -117,16 +140,16 @@ def build_gain_view(snapshot, history, profile, fx, *, annual_goal=None, max_los
     base = next((row for row in scenarios if row['name'] == 'Base'), {})
     downside = next((row for row in scenarios if row['name'] == 'Downside'), {})
     check('Return goal', base.get('annualized_return_percent', -1e9) >= goal,
-          f'Base sensitivity must exceed your {goal:g}% annual return hurdle; this is not an expected return.')
-    check('Downside sensitivity', downside.get('total_return_percent', -1e9) >= -loss,
-          f'Terminal downside sensitivity must stay within {loss:g}%; interim falls may be larger.')
+          f'Base annualized sensitivity is {base.get("annualized_return_percent", "unavailable")}% versus your {goal:g}% annual return hurdle; this is not an expected return.')
+    check('Downside sensitivity', downside.get('total_return_percent', -1e9) >= -downside_limit,
+          f'Modeled terminal downside return is {downside.get("total_return_percent", "unavailable")}% versus your {downside_limit:g}% maximum scenario-loss limit; interim falls may be larger.')
     benchmark = history.get('benchmark') or {}
-    check('Benchmark comparison', benchmark.get('excess_cagr_percentage_points', -1e9) > 0,
-          'The stock must have outperformed its market ETF over the same historical dates. Past outperformance may reverse.')
+    check('Benchmark comparison', benchmark.get('excess_cagr_percentage_points', -1e9) >= excess_return_limit,
+          f'Historical excess return is {benchmark.get("excess_cagr_percentage_points", "unknown")} percentage points per year versus your {excess_return_limit:g} point minimum. Past outperformance may reverse.')
     check('Currency conversion', units is not None, 'A dated conversion rate is required for budget gain figures.')
     reasons = [row['detail'] for row in checks if not row['passed']]
     insufficient = not quote['valid'] or history.get('status') != 'available' or bool(assessment['missing_data'])
-    unsuitable = not fit or (history.get('status') == 'available' and (drawdown > loss or (volatility is not None and volatility > limits['volatility'])))
+    unsuitable = not fit or (history.get('status') == 'available' and (drawdown > loss or (volatility is not None and volatility > volatility_limit)))
     eligible = all(row['passed'] for row in checks)
     verdict = 'INSUFFICIENT DATA' if insufficient else 'NOT SUITABLE' if unsuitable else 'WAIT'
     reason = reasons[0] if reasons else 'Quantitative checks pass. Review current company-specific web evidence before treating this as a buy candidate.'
@@ -134,8 +157,15 @@ def build_gain_view(snapshot, history, profile, fx, *, annual_goal=None, max_los
         reason = next(row['detail'] for row in checks if not row['passed'] and row['label'] in ('Loss tolerance', 'Risk profile', 'Preference fit'))
     return {'market': snapshot['market'], 'symbol': snapshot['symbol'], 'company': snapshot['fundamentals'].get('company'),
             'generated_at': datetime.now(timezone.utc).isoformat(), 'quote': snapshot.get('quote'), 'quote_validation': quote,
-            'preferences': {**profile, 'annual_return_goal_percent': goal, 'max_loss_percent': loss, 'modeled_years': years,
-                            'screening_note': 'Return/loss limits start from risk-based defaults; you can change them. The amount models a hypothetical full-budget allocation, not a position-size recommendation.'},
+            'preferences': {**profile, 'annual_return_goal_percent': goal, 'max_loss_percent': loss,
+                            'max_volatility_percent': volatility_limit, 'max_downside_percent': downside_limit,
+                            'min_history_years': minimum_history, 'required_history_years': max(minimum_history, years),
+                            'max_quote_age_minutes': quote_age_limit,
+                            'min_excess_return_percentage_points': excess_return_limit,
+                            'modeled_years': years, 'applied_screening': criteria, 'screening_defaults': defaults,
+                            'screening_key': screening_key,
+                            'screening_mode': 'custom' if custom else 'profile_defaults',
+                            'screening_note': 'The explicit applied screening values are authoritative for this review, including overrides of risk presets. The saved risk label is context; a permissive custom screen does not make a stock low risk. The amount models a hypothetical full-budget allocation, not a position-size recommendation.'},
             'budget': {'amount': amount, 'base_currency': profile['currency'], 'stock_currency': currency,
                        'amount_in_stock_currency': round(budget_in_quote, 2) if budget_in_quote is not None else None,
                        'hypothetical_fractional_shares': round(units, 6) if units is not None else None,

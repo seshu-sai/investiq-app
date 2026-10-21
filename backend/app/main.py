@@ -211,6 +211,11 @@ class ValuationOptions(BaseModel):
     amount: float | None = Field(default=None, gt=0, le=1_000_000_000_000, allow_inf_nan=False)
     annual_goal: float | None = Field(default=None, gt=0, le=100, allow_inf_nan=False)
     max_loss: float | None = Field(default=None, gt=0, le=100, allow_inf_nan=False)
+    max_volatility: float | None = Field(default=None, ge=0, le=300, allow_inf_nan=False)
+    max_downside: float | None = Field(default=None, ge=0, le=100, allow_inf_nan=False)
+    min_history_years: int | None = Field(default=None, ge=1, le=10)
+    max_quote_age_minutes: int | None = Field(default=None, ge=1, le=60)
+    min_excess_return: float | None = Field(default=None, ge=-100, le=100, allow_inf_nan=False)
     cost_basis: float | None = Field(default=None, gt=0, le=1_000_000_000, allow_inf_nan=False)
     shares: float | None = Field(default=None, gt=0, le=1_000_000_000_000, allow_inf_nan=False)
 
@@ -237,12 +242,20 @@ def stock_valuation(
     amount: float | None = Query(default=None, gt=0, le=1_000_000_000_000, allow_inf_nan=False),
     annual_goal: float | None = Query(default=None, gt=0, le=100, allow_inf_nan=False),
     max_loss: float | None = Query(default=None, gt=0, le=100, allow_inf_nan=False),
+    max_volatility: float | None = Query(default=None, ge=0, le=300, allow_inf_nan=False),
+    max_downside: float | None = Query(default=None, ge=0, le=100, allow_inf_nan=False),
+    min_history_years: int | None = Query(default=None, ge=1, le=10),
+    max_quote_age_minutes: int | None = Query(default=None, ge=1, le=60),
+    min_excess_return: float | None = Query(default=None, ge=-100, le=100, allow_inf_nan=False),
     cost_basis: float | None = Query(default=None, gt=0, le=1_000_000_000, allow_inf_nan=False),
     shares: float | None = Query(default=None, gt=0, le=1_000_000_000_000, allow_inf_nan=False),
 ):
     if (cost_basis is None) != (shares is None):
         raise HTTPException(422, 'Supply both average buy price and shares owned')
-    options = ValuationOptions(amount=amount, annual_goal=annual_goal, max_loss=max_loss, cost_basis=cost_basis, shares=shares)
+    options = ValuationOptions(amount=amount, annual_goal=annual_goal, max_loss=max_loss,
+                               max_volatility=max_volatility, max_downside=max_downside,
+                               min_history_years=min_history_years, max_quote_age_minutes=max_quote_age_minutes,
+                               min_excess_return=min_excess_return, cost_basis=cost_basis, shares=shares)
     return valuation_result(market, symbol, options)
 
 
