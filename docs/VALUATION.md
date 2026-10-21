@@ -1,71 +1,85 @@
-# Valuation and potential gains
+# Investing decisions and valuation
 
-Select a stock in Overview, then open **Valuation**. This view supports US, Canadian and Indian stocks when the required data is available. **Current market** is the default view; **Long-term valuation** retains the earnings scenarios and strict buy-candidate checklist.
+Choose **Analyse stock** beside a watchlist symbol, or open **Investing decisions** / **Valuation** for the selected stock. Both open the same beginner-friendly investing plan. The separate **Long-term estimates** view retains earnings scenarios and historical returns.
 
-- Your saved amount, base currency, risk level and horizon provide the starting inputs. Expand **Screening limits and your existing position** to edit screening thresholds, or change the modeled budget in the position planner, then press **Apply criteria**. Overrides do not overwrite your saved profile.
-- Enter both your average buy price and shares owned to see unrealized gain/loss in the stock's currency. This is calculated from the latest available provider price, not your brokerage's executable bid/ask. Figures refresh every 60 seconds while the tab is visible.
-- Inspect adjusted historical returns, maximum peak-to-trough drawdown, annualized volatility, a growth-of-100 chart and an ETF comparison over matching dates. Yahoo's adjusted daily closes approximate dividends and splits; prices and currency metadata remain unofficial. Historical returns are expressed in the stock currency.
-- Review downside/base/upside earnings sensitivities and hypothetical gains/losses on the modeled budget. A dated daily FX rate converts the budget; base-currency gains hold FX constant. Actual currency movement, fees, tax, bid/ask spreads and dividend payments are excluded from the earnings sensitivities. The full-budget example is a calculator, not a position-size recommendation.
-- Press **Research latest news** for a live, cited web search and a separate structured assessment. This makes OpenAI requests and can use API/tool credits. Price polling never calls OpenAI. The returned web sources appear as clickable inline citations; date extraction still requires source review. Each manual review is saved to the research audit history.
+## Three ordinary questions
 
-## Current-market context and position planning
+- **Money available for this stock:** the most money the hypothetical position may use, in your saved base currency.
+- **How long might you hold it?:** about one, three or six months (4, 12 or 26 weeks). This explicit plan timeframe does not overwrite the saved long-term profile.
+- **Money you are prepared to risk:** the planned loss if the chosen exit fills at its price, including estimated round-trip costs. Actual losses can be larger. The visible starting amount is 0.5%, 1% or 2% of the available money for saved low, medium or high risk, respectively. These are editable starting policies, not a measurement of loss capacity or a recommendation.
 
-The current-market view describes price conditions for entry research over days to weeks. It does not require a five-year earnings sensitivity to clear every stress test. It uses at least 61 completed daily sessions, excluding the current exchange-local date because its bar can be provisional. The latest completed session must be within four calendar days and recent gaps cannot exceed ten days. Historical return calculations retain dividend/split-adjusted closes; trend indicators use price closes without dividend adjustment, matching the quote price basis. Both series come from one Yahoo history request.
+Press **Analyse stock** for calculations without an AI call. **Check company news** applies the same answers, searches the web and requests a cited review; it uses OpenAI API/tool credits. **Reset my answers** restores the visible starting answers and clears advanced overrides. No form action changes saved preferences or places an order.
 
-The observed trend is **supportive** when the latest usable trade quote and 20-session simple moving average are both above the 50-session average, **weak** when both are below it, and **mixed** otherwise. These are explicit descriptive rules, not optimized trading signals. The page also shows 20/60-session price changes, Wilder 14-session RSI and the 60-session return difference versus the matching-market ETF on precisely matching dates. RSI at least 70 flags an extended supportive trend; at most 30 flags depressed momentum, not an automatic buy. Missing benchmark evidence remains unavailable rather than contributing a neutral score. There is no weighted score, expected gain or win probability.
+## Weeks-to-months decision
 
-A stale/missing/future trade quote or daily bar produces **FRESH TRADE QUOTE NEEDED**, with historical context retained. A stock outside saved markets/assets or the selected historical drawdown/volatility limits produces **REVIEW YOUR RISK LIMITS**. A supportive trend does not clear either conflict. Real-time labeling still requires provider entitlement and a timestamp within two minutes. Prices poll every 60 seconds; daily indicators cache for 15 minutes and this is not an intraday streaming strategy. Financial completeness, annual return goals and terminal stress losses remain visible in the separate long-term view. The cited news review receives both views and retains its long-term verdict restrictions.
+The engine in `backend/app/opportunities.py` is independent of the five-year earnings screen. It requires a recent provider trade quote, company identity, saved-market/asset fit, currency conversion and at least 61 completed daily high/low/close sessions. Today's exchange-local bar is excluded. The last completed date must be within four calendar days, and gaps over ten days invalidate the recent levels. Daily bars cannot qualify as fresh trade quotes.
 
-The position planner takes an explicit **budget-risk percentage**, **planned exit below the current quote** and optional **target above the quote**. A 1% budget-risk input is distinct from a 1% maximum terminal stock loss. It calculates whole shares as the smaller of:
+The entry rule requires the current quote and 20-session price average to be above the 50-session average. The automatic exit reference is the 20-session average when price is above it, otherwise the 50-session average, minus one Wilder 14-session average true range. The target reference is the highest traded price over the chosen holding period's trading-session lookback, capped at 126 sessions and actual available history. Neither reference is a future price forecast.
 
-- Stock-currency budget / current quote.
-- Stock-currency budget × risk percentage / (current quote − planned exit).
+Estimated round-trip costs start at 0.2% of entry value, editable in Advanced options. With entry P, exit S, target T and round-trip cost fraction c:
 
-The result shows allocation, unallocated budget, planned loss in the base currency, stock-to-exit distance and optional target gain/reward-to-risk. It places no orders. The modeled budget is not verified client portfolio equity. Gaps, slippage, fees, tax and currency changes can make actual losses exceed the planned amount. Missing FX or a fresh quote, invalid exit/target levels, and saved-market/asset conflicts withhold position size. Historical drawdown/volatility conflicts retain the hypothetical arithmetic with an explicit review-required status and the failed limits; they never become a passed risk assessment merely because a small position is modeled. Price refresh recalculates the plan using the same entered levels; levels that become invalid withhold it. Editing plan inputs clears the previous news assessment just like editing screening thresholds.
+- Per-share planned loss = P − S + P × c.
+- Per-share target profit = T − P − P × c.
+- Profit/loss ratio = per-share target profit / per-share planned loss.
+- Whole shares = floor(min(available stock-currency money / [P × (1 + c/2)], stock-currency money-at-risk / per-share planned loss)).
 
-## Calculations and assumptions
+The default minimum profit/loss ratio is 1.5, editable. It is an explicit rule, not a probability, optimized threshold or proof of profitability. For minimum ratio R, the highest entry satisfying that arithmetic is (T + R × S) / [(1 + R) × (1 + c)]. A lower price must still have a supportive trend, valid quote and affordable position; it is not an unconditional buy limit.
 
-Default modeled years are 1 for a 0–1 year preference, 2 for 1–3, 4 for 3–5, and 5 for 5+. The model never silently substitutes a long horizon for a short one.
+The main card shows conditional target profit, planned exit loss, money used, money left uninvested, whole shares, current price, maximum qualifying entry price and exit/target references. Money figures use the saved base currency; share prices use the stock currency. FX is dated daily and held unchanged for the calculations. The references are not broker orders, guaranteed fills or maximum losses. Gaps, fees, slippage, taxes and future FX changes can increase losses.
 
-Starting screening limits are policy defaults, not forecasts or measured risk tolerance:
+### Decision meanings
 
-| Saved risk | Annual return hurdle | Maximum loss | Annualized volatility limit |
+- **BUY SETUP:** the explicit entry rule and risk-sized arithmetic pass. Company news may still be unreviewed; the card identifies its status.
+- **BUY CANDIDATE:** the numerical entry rule still passes and a validated cited company-news review supports it.
+- **WAIT FOR BETTER PRICE:** net target profit is too small versus planned loss. The card shows a conditional entry threshold.
+- **WAIT FOR TREND:** price/average trends are not aligned upward.
+- **WAIT / INSUFFICIENT DATA:** required evidence, valid levels or an affordable whole-share position is missing.
+- **AVOID:** validated dated negative company evidence overrides a price setup.
+
+Saved low/medium/high risk presets determine a visible starting money-at-risk amount. Historical full-stock volatility and drawdown remain context, alongside long-term earnings weaknesses; they do not silently veto this separately sized short-term plan. If the user explicitly enters drawdown or volatility limits in Advanced options, only those selected stock-risk filters become binding. Saved markets/assets remain binding. This separation does not establish full portfolio suitability or make a volatile stock low risk.
+
+A personal target above the observed range cannot manufacture a buy setup. Advanced exit/target inputs are explicit assumptions. Missing information remains missing; there is no weighted confidence percentage or expected-profit probability. This investing rule has not been validated as a profitable strategy or for out-of-sample use.
+
+## Company-news review
+
+The manual review follows the selected view. The weeks-to-months news reviewer receives company identity, the selected timeframe and source-page text; our five-year calculations are excluded from its input. The older long-term view has its own independently constrained review. The long-term screen may remain NOT SUITABLE while an independently risk-sized entry qualifies as a candidate; each is labeled with its timeframe.
+
+The opportunity needs dated company evidence within 120 days, at least one positive event, a supportive review, and either a company/regulatory source or at least two cited source domains. It does not require a new positive announcement every 30 days. A negative stance requires dated negative evidence. All event URLs must resolve to actual web-search citation annotations. Each opportunity event also needs a short verbatim supporting quote from the actual fetched source-page text and a date found on that page. Technical indicators and our own long-term calculations cannot be presented as sourced company events. Dates in the future or over 120 days old, invented URLs, unverified source quotes/dates and incomplete/refused/invalid responses cannot produce a reviewed candidate. An honest mixed review may contain no events and remains explicitly limited.
+
+Citation matching accepts URL tracking/presentation differences (UTM parameters, PDF presentation and fragments), preserving content-changing query parameters and restoring the actual searched URL in the output. Upcoming earnings dates are not treated as past event dates. Source pages are fetched without credentials, with public-address checks on redirects, bounded HTML size, timeout and concurrency. PDF presentation links are read through their equivalent HTML page; unavailable/blocked/non-HTML sources remain unverifiable. A review-validation failure is displayed separately from the numerical setup and is not interpreted as a negative business judgment. AI interpretation and company relevance still require source review.
+
+Reviews expire after 15 minutes. Edits hide earlier buy decisions until reanalysis. New answers, optional risk filters, stock identity, saved profile context, budget and manual levels all affect review compatibility. A price refresh recomputes current sizing/levels; it may reuse only the unexpired matching news conclusion, never old price arithmetic. A failed current entry rule cannot be promoted by earlier good news. Manual reviews are audited with both assessments, assumptions and the primary opportunity verdict.
+
+## Advanced options and long-term estimates
+
+Advanced controls retain optional personal exit/target prices, minimum profit/loss ratio, estimated trading costs, historical drawdown/volatility limits, annual return goal, modeled terminal-loss tolerance, minimum historical coverage, maximum trade quote age, historical benchmark requirement and existing ownership inputs. Ordinary users need only the three visible answers. The older financial-background AI review remains available under a clearly labeled disclosure and does not issue buy instructions.
+
+Long-term modeled years are 1 for a saved 0–1 year preference, 2 for 1–3, 4 for 3–5 and 5 for 5+. Starting long-term defaults are:
+
+| Saved risk | Annual return hurdle | Historical loss limit | Annualized volatility limit |
 | --- | --- | --- | --- |
 | Low | 6% | 15% | 20% |
 | Medium | 10% | 30% | 40% |
 | High | 14% | 50% | 70% |
 
-Valuation exposes the annual return hurdle, maximum historical drawdown, maximum annualized volatility and maximum modeled terminal downside loss. **More screening criteria** exposes minimum history, maximum trade quote age and minimum annual excess return over the market ETF. Click **Apply criteria** to recalculate the checklist, then **Research latest news** to review the same applied limits with cited web evidence. The research button also applies the current form values. Each checklist item and the applied-criteria summary show the actual values used.
+These are policy defaults. Three consecutive recent positive annual EPS records and positive same-currency trailing EPS are required for earnings sensitivities. Base growth is half the median historical annual EPS change, capped between −10% and +10%. Base exit P/E is the lower of current P/E and 20. Downside growth is at most zero, with 80% of the lower of current P/E and 15. Upside growth is capped at 15%, with an exit P/E capped at 25. Future price = trailing EPS × (1 + assumed growth)^years × exit P/E. These are conditional assumptions, not calibrated forecasts or independently verified fair values.
 
-Limits apply to the current stock screen; they do not update the saved profile. Blank fields use the profile defaults above. A blank downside limit follows the selected historical drawdown limit; enter a separate downside limit to screen terminal sensitivity independently. **Reset to profile defaults** clears all overrides and optional position inputs. Increasing tolerance does not make a stock safe or change its saved risk label.
+Long-term cash gains assume the full modeled budget is invested. They are separate from the smaller risk-sized opportunity position, exclude dividends/costs/taxes/future FX changes and must not be added to its target-profit figure. The goal entry threshold is the entry required under the base assumptions, not a verified buy price.
 
-Additional defaults are three years of history, a 15-minute trade quote age and at least zero percentage points of annual excess return. Required history is the larger of the chosen minimum and the modeled holding period. Quote age accepts 1–60 whole minutes, history 1–10 whole years, volatility 0–300%, downside 0–100%, and benchmark excess return −100 to +100 percentage points/year. Return and historical drawdown limits must be greater than zero and no more than 100%. These input bounds are validation limits, not recommended settings. Daily bars, missing financial evidence and invalid quotes remain disqualifying regardless of the chosen limits.
+Historical returns use dividend/split-adjusted closes, unlike price-only trend indicators. The growth-of-100 chart, matching-date market ETF comparison, maximum drawdown, volatility and monthly-start holding-period percentile replays describe the past. Overlapping windows are not independent and their positive frequency is not a forecast probability. Cash replays hold FX unchanged.
 
-The earnings model requires three consecutive positive annual diluted-EPS records and positive trailing EPS in matching provider quote currency. Base growth is half the median observed annual EPS growth, bounded to -10% to +10%. Downside growth is at most zero, with an exit multiple of 80% of the lower of current P/E and 15. Base exit P/E is the lower of current P/E and 20; upside is the lower of current P/E and 25, with growth capped at 15%. These caps and shrinkage are explicit conservative assumptions. They are not peer-derived valuations, calibrated forecasts or analyst consensus. EPS revisions, ADR ratios and stock splits can complicate comparisons.
+The old long-term BUY CANDIDATE gate still requires all its quantitative checks, adequate history covering the holding period, suitable saved horizon/markets/assets, earnings hurdle/downside passes, benchmark threshold, currency conversion and recent multi-domain web evidence. Its restrictions do not decide the new weeks-to-months opportunity.
 
-Future price sensitivity = trailing EPS × (1 + assumed growth)^years × assumed exit P/E.
+## API and freshness
 
-Conditional entry threshold = base-case future price / (1 + annual return hurdle)^years. This is a required entry under those assumptions, not an independently verified intrinsic value. The existing SEC cash-flow model remains available separately at `/api/cash-flow-valuation/{market}/{symbol}` and retains its illustrative-only restrictions.
+- `GET /api/valuation/{market}/{symbol}` calculates both views without an AI call.
+- `POST /api/valuation/{market}/{symbol}/research` takes the same JSON options, adds manual cited review and saves an audit record. `review_scope` selects `opportunity` (default) or `long_term`; it is removed before the calculation and retained in the audit.
+- Beginner inputs: `amount`, `holding_weeks` (whole number 4–26), `loss_amount` (positive, no greater than available money).
+- Optional entry inputs: `min_reward_risk` (0.5–10), `round_trip_cost_percent` (0–10), `planned_stop`, `planned_target` (positive stock-currency prices). With `loss_amount`, levels may be supplied separately. Legacy `risk_budget` requires a stop and cannot be combined with `loss_amount`.
+- Legacy inputs remain `annual_goal`, `max_loss`, `max_volatility`, `max_downside`, `min_history_years`, `max_quote_age_minutes`, `min_excess_return`, `cost_basis` and `shares`.
+- Responses add `opportunity` alongside `market_setup`, `position_plan` and the long-term `buy_assessment`. Each opportunity includes resolved answers, checks, levels, monetary calculations and a review-compatibility key.
+- The original SEC cash-flow endpoint remains `/api/cash-flow-valuation/{market}/{symbol}`.
 
-Historical holding-period replays start once per month and use actual calendar dates matching the modeled duration. Displayed 10th/50th/90th percentiles describe those past outcomes only. Windows overlap heavily: the page shows both the raw window count and an approximate independent-period count. Their positive frequency is not a probability of future profit. A positive historical 10th percentile does not establish downside protection. Missing/stale data withholds these estimates rather than substituting generic returns.
+Prices refresh every 60 seconds while visible. Finnhub trade quotes cache for 15 seconds; history and FX for 15 minutes; fundamentals/filings for five minutes. Real-time labeling still needs provider entitlement and a timestamp within two minutes. CA/IN data is daily and cannot produce an actionable fresh-trade setup. This is not an intraday streaming or automated execution system.
 
-## Buy assessment
-
-The page can show **INSUFFICIENT DATA**, **NOT SUITABLE**, **WAIT**, **AVOID**, or **BUY CANDIDATE**. A buy candidate is a research screening result, not a broker instruction or a guarantee.
-
-Every quantitative check must pass before BUY CANDIDATE is allowed: a usable provider trade price within the applied quote-age limit, three recent consecutive annual periods, adequate history, drawdown/volatility within the selected limits, saved-market/asset/horizon fit, an available earnings sensitivity that clears the return hurdle and separate downside limit, historical excess return at least the chosen minimum versus the matching-market ETF, and available currency conversion. Daily bars cannot produce a buy candidate. CA/IN gains and history remain available, but a licensed intraday feed is needed for their candidate gate.
-
-A manual web review must also support the candidate with dated events, at least one in the last 30 days, and citations from at least two distinct domains present in the actual web-search annotations. Event dates older than 120 days, future dates, fabricated citations, unsupported verdicts, incomplete/refused model responses and missing evidence retain the quantitative verdict. AVOID requires dated negative evidence. The model receives the explicit applied limits and computed checks; a custom volatility limit overrides the numeric risk preset. A news narrative cannot override a failed check. A displayed buy-candidate review expires after 15 minutes, and loses that signal earlier if refreshed quantitative checks fail. Editing inputs withholds the old buy-candidate signal; applying criteria clears the previous news review. Reviews can be reused on price refresh only for the same stock, profile context, budget and all seven resolved screening limits. Applied criteria are persisted in each manual research audit record.
-
-These gates are intentionally transparent. They have not been validated as a profitable trading strategy. Holdings, taxes, concentration, liquidity needs and personal loss capacity still require review. The previous AI Research page retains its stricter BUY restriction; it does not use the new conditional screening verdict.
-
-## API
-
-- `GET /api/valuation/{market}/{symbol}`: current calculations, no model call. Optional query inputs: `amount`, `annual_goal`, `max_loss` (historical drawdown), `max_volatility`, `max_downside` (terminal scenario loss), `min_history_years`, `max_quote_age_minutes`, `min_excess_return` (percentage points/year), `cost_basis`, `shares`. Responses include `preferences.applied_screening`, `screening_defaults` and a resolved `screening_key` for review compatibility.
-- `POST /api/valuation/{market}/{symbol}/research`: the same optional inputs in a JSON body, plus cited web research and audit persistence.
-- Both valuation endpoints also accept `risk_budget` (percentage of modeled budget), `planned_stop` and optional `planned_target` (stock-currency prices). Risk and stop must be supplied together; a target requires both. Responses include `market_setup` and `position_plan`, and manual research audits retain these calculations and assumptions.
-- `GET /api/cash-flow-valuation/{market}/{symbol}`: the original SEC cash-flow sensitivity endpoint (US only).
-
-Price history and FX cache for 15 minutes. Fundamentals and filings cache for 5 minutes. Finnhub trade quotes cache for 15 seconds. A page refresh does not make annual statements or daily bars real-time.
-
-Sources: [yfinance history API](https://ranaroussi.github.io/yfinance/reference/yfinance.price_history.html), [Fidelity simple moving averages](https://www.fidelity.com/learning-center/trading-investing/technical-analysis/technical-indicator-guide/sma), [Fidelity RSI](https://www.fidelity.com/learning-center/trading-investing/technical-analysis/technical-indicator-guide/RSI), [OpenAI web-search API and citation requirements](https://developers.openai.com/api/docs/guides/tools-web-search), [FINRA on return and historical performance](https://syndication.finra.org/content/key-concepts-return-and-rate-return).
+Sources: [Fidelity ATR](https://www.fidelity.com/learning-center/trading-investing/technical-analysis/technical-indicator-guide/atr), [Fidelity moving averages](https://www.fidelity.com/learning-center/trading-investing/technical-analysis/technical-indicator-guide/sma), [yfinance history](https://ranaroussi.github.io/yfinance/reference/yfinance.price_history.html), [OpenAI web search](https://developers.openai.com/api/docs/guides/tools-web-search), [FINRA order types and stop risks](https://syndication.finra.org/content/understanding-order-types-can-save-time-and-money).

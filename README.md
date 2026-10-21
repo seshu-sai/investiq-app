@@ -2,7 +2,7 @@
 
 React/TypeScript investment research workspace with a FastAPI backend, saved investor preferences, a watchlist, provider prices/news, annual financial evidence and AI-assisted assessments.
 
-This is a single shared workspace without authentication. Run it locally. It cannot guarantee profitable decisions. The AI Research page keeps BUY disabled. The Valuation page offers a conditional BUY CANDIDATE research screen when quantitative checks and cited news support it; portfolio suitability remains incomplete.
+This is a single shared workspace without authentication. Run it locally. It cannot guarantee profitable decisions. Investing decisions and Valuation offer a weeks-to-months BUY SETUP when the entry rule and risk-sized arithmetic pass, and BUY CANDIDATE when validated cited company news also supports it. The rule has not been proven profitable; full portfolio suitability remains incomplete.
 
 ## Run
 
@@ -12,7 +12,7 @@ Requirements: Docker Desktop, Node.js 20.19+ or 22.12+, and npm. Local backend d
 2. Run `docker compose up --build -d` from the project root.
 3. Run `npm ci` and `npm run dev` inside `frontend`.
 4. Open http://localhost:5173. The API documentation is at http://localhost:8000/docs.
-5. Save your risk tolerance and time horizon, add a ticker, and open its research. The **AI Research** tab runs a new assessment on demand. Confirm existing ownership there if applicable.
+5. Save your profile, add a ticker and choose **Analyse stock**. Answer three questions: available money, holding period and money at risk. The app chooses price references and position size. **Check company news** runs a manual cited review; technical controls remain under **Advanced options**.
 
 For a local backend without Docker:
 
@@ -30,7 +30,7 @@ The local backend defaults to SQLite. Docker Compose uses PostgreSQL. Existing t
 - Canada/India: unofficial Yahoo Finance daily bars, cached for 60 seconds. The timestamp represents the session date. A current day's bar may still be provisional. These are never labeled real-time.
 - Annual financials: SEC companyfacts for supported US-GAAP US filers, with clearly labeled Yahoo fallback. Annual data and fundamentals are cached for 5 minutes. The shared SEC ticker directory is cached for 24 hours. Annual statement freshness is distinct from price freshness.
 - P/E scenarios use a retrieved provider price and earnings in the provider's matching quote currency. EPS × reported P/E is never substituted for a missing price. Scenarios contain generic assumptions and never determine the investment verdict.
-- Assessments use saved preferences, ownership confirmation, dated evidence, growth trends, risk flags and data gaps. Missing essential data produces **INSUFFICIENT DATA**. **WAIT** means a purchase is not justified; **AVOID** and **HOLD** require appropriate evidence/context. AI Research does not permit **BUY** or numerical AI entry/target prices. The separate Valuation screen can show **BUY CANDIDATE**, with explicit conditions and model-calculated sensitivities; see the valuation guide.
+- Assessments use saved preferences, ownership confirmation, dated evidence, growth trends, risk flags and data gaps. Missing essential data produces **INSUFFICIENT DATA**. **WAIT** means a purchase is not justified; **AVOID** and **HOLD** require appropriate evidence/context. The optional older financial-background review does not issue BUY. The primary weeks-to-months opportunity can show BUY SETUP or BUY CANDIDATE independently of the five-year earnings screen. Price references and cash figures are calculated by code; AI cannot invent or change them.
 - If OpenAI is unconfigured, unavailable, refuses, truncates its response, or violates the structural/evidence-reference/decision checks, deterministic research remains available. The UI identifies the mode. AI prose still requires human review.
 - Every assessment stores its inputs, profile, policy version and output. Inspect the last ten runs at `/api/analysis-history/{market}/{symbol}`. AI runs are manual; refreshing prices does not call OpenAI.
 
@@ -46,9 +46,7 @@ Tests use temporary SQLite databases and mocked providers; they do not call paid
 
 See [the valuation guide](docs/VALUATION.md) for preference-based gains, historical replays and cited web assessments. The original SEC endpoint is now `/api/cash-flow-valuation/{market}/{symbol}`.
 
-In **Valuation**, set your own return goal, historical drawdown, volatility and modeled downside limits. Expand **More screening criteria** for history coverage, trade quote age and benchmark return requirements. **Apply criteria** updates the checklist; **Research latest news** reviews those same values. The applied limits are displayed together, and changing them clears the previous news review. These overrides apply to the current stock screen; **Reset to profile defaults** restores your saved profile's starting limits.
-
-Valuation now opens **Current market**, showing the latest quote against completed daily trends, momentum, RSI and recent benchmark performance. **Long-term valuation** keeps the earnings stress tests separate. The position planner calculates whole shares from your modeled budget, chosen budget-risk percentage and explicit exit/target prices; risking 1% of a budget differs from assuming the stock cannot fall more than 1%. It withholds sizing for stale quotes, invalid levels, unavailable FX or saved-market/asset conflicts, and flags historical risk-limit failures alongside hypothetical sizing. These descriptive indicators and calculations have not been validated as a profitable trading strategy.
+**Investing decisions** and **Valuation** open a plain three-question form: money available, roughly one/three/six months, and money at risk. The main card shows a decision, conditional target profit, planned exit loss, share count and money used. Advanced options retain manual price levels and detailed long-term filters. A low saved risk label sets a visible starting loss amount; full-stock historical drawdown/volatility presets remain context unless explicitly selected as filters. Saved markets/assets and current quote/FX requirements remain binding. **Long-term estimates** keeps the old earnings sensitivities separate. Manual cited news reviews identify whether evidence supports the short-term setup, and the audit records retain both scopes.
 
 See [the code review](docs/CODE_REVIEW.md) for resolved issues and remaining work. Live NVIDIA price/history/FX/news retrieval and web search have been smoke-tested locally. Provider entitlements and investment performance must be evaluated separately.
 

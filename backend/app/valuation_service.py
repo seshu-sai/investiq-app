@@ -8,6 +8,7 @@ import yfinance as yf
 from .data_utils import finite_number, normalize_symbol, safe_url, ttl_cache
 from .gain_valuation import HORIZON_YEARS, build_gain_view
 from .market_setup import build_market_setup
+from .opportunities import build_opportunity
 from .price_history import get_price_history, get_fx_rate, historical_performance
 from .research_service import collect_snapshot
 
@@ -50,6 +51,9 @@ def company_news(market, symbol):
 
 
 def valuation_snapshot(market, symbol, profile, **options):
+    opportunity_options = {key: options.pop(key) for key in ('holding_weeks', 'loss_amount', 'min_reward_risk', 'round_trip_cost_percent') if key in options}
+    opportunity_options.update({key: options[key] for key in ('planned_stop', 'planned_target', 'risk_budget') if key in options})
+    opportunity_options['explicit_stock_limits'] = [label for key, label in (('max_loss', 'Loss tolerance'), ('max_volatility', 'Risk profile')) if key in options]
     warnings = []
     with ThreadPoolExecutor(max_workers=3) as pool:
         jobs = {'snapshot': pool.submit(collect_snapshot, market, symbol),
@@ -79,6 +83,8 @@ def valuation_snapshot(market, symbol, profile, **options):
         history = {'status': 'insufficient', 'reason': 'Price-history currency does not match the current quote', 'returns': [], 'chart': []}
     snapshot['warnings'].extend(warnings)
     result = build_gain_view(snapshot, history, profile, fx, **options)
+    result['company_website'] = snapshot['fundamentals'].get('website')
     result['market_setup'] = build_market_setup(data['history'], data['benchmark'], snapshot.get('quote'),
                                                result['preferences'], result['buy_assessment']['checks'], market=market)
+    result['opportunity'] = build_opportunity(result, data['history'], **opportunity_options)
     return result

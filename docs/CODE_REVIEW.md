@@ -50,3 +50,13 @@ No model confidence percentage is presented: there is no calibration dataset. No
 - [OpenAI structured outputs](https://developers.openai.com/api/docs/guides/structured-outputs): schema use, explicit refusals and incomplete-response handling. API compatibility was checked against the locally installed SDK; no paid model calls were made.
 - [SEC EDGAR APIs](https://www.sec.gov/search-filings/edgar-application-programming-interfaces): companyfacts units, filing/period context and API update behavior.
 - [FINRA automated investment tools](https://syndication.finra.org/content/what-you-should-know-about-automated-investment-tools): limits of automated tools and the investor information needed for suitability.
+
+## Weeks-to-months decisions and beginner inputs
+
+The primary investing flow now accepts available money, a one/three/six-month holding period and planned money at risk. Detailed terminology and the older financial-background review are disclosed under optional controls. Selecting Analyse stock from the watchlist opens the plan directly. Both Investing decisions and Valuation use the same component, removing the old default path that could never issue a buy recommendation.
+
+The short-term opportunity engine has its own explicit entry rules and cost-aware whole-share sizing. Five-year earnings/stock-risk presets remain context; only explicitly selected stock drawdown/volatility filters veto the short-term plan. Saved-market/asset fit, identity, trade freshness, daily OHLC quality, available cash and chosen money-at-risk remain binding. Manual targets outside observed price evidence cannot create a buy setup. Zero-share results explain the loss capacity required for one whole share. Provisional same-day OHLC inconsistencies no longer invalidate completed history.
+
+Cited review now separates the two timeframes and normalizes tracking/PDF presentation URLs. New opportunity events require short quotes and dates found on actual fetched source pages; our own metrics cannot masquerade as company news. Unavailable source evidence remains limited/unavailable. Current plan arithmetic is recomputed on price refresh, and old news is reusable only for matching answers and an unexpired review. The research audit records the reviewed scope and its decision, with both numerical assessments in the snapshot. The short-term news-only reviewer does not receive five-year calculations, preventing those from leaking into fabricated company events.
+
+This is a transparent, unvalidated trading rule. Code/fixture/provider checks do not establish profitable returns. No out-of-sample evaluation, live track record, client-specific portfolio suitability or broker execution has been added.

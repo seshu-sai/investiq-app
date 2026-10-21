@@ -2,6 +2,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from decimal import Decimal
 import os
+from typing import Literal
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -221,14 +222,21 @@ class ValuationOptions(BaseModel):
     risk_budget: float | None = Field(default=None, gt=0, le=100, allow_inf_nan=False)
     planned_stop: float | None = Field(default=None, gt=0, le=1_000_000_000, allow_inf_nan=False)
     planned_target: float | None = Field(default=None, gt=0, le=1_000_000_000, allow_inf_nan=False)
+    holding_weeks: int | None = Field(default=None, ge=4, le=26)
+    loss_amount: float | None = Field(default=None, gt=0, le=1_000_000_000_000, allow_inf_nan=False)
+    min_reward_risk: float | None = Field(default=None, ge=.5, le=10, allow_inf_nan=False)
+    round_trip_cost_percent: float | None = Field(default=None, ge=0, le=10, allow_inf_nan=False)
+    review_scope: Literal['opportunity', 'long_term'] | None = None
 
     @model_validator(mode='after')
     def paired_position(self):
         if (self.cost_basis is None) != (self.shares is None):
             raise ValueError('Supply both average buy price and shares owned to calculate unrealized gains')
-        if (self.risk_budget is None) != (self.planned_stop is None):
+        if self.loss_amount is not None and self.risk_budget is not None:
+            raise ValueError('Use a money loss limit or a percentage risk budget, not both')
+        if self.loss_amount is None and (self.risk_budget is None) != (self.planned_stop is None):
             raise ValueError('Supply both budget-risk percentage and planned exit price')
-        if self.planned_target is not None and self.planned_stop is None:
+        if self.loss_amount is None and self.planned_target is not None and self.planned_stop is None:
             raise ValueError('A target requires a budget-risk percentage and planned exit price')
         return self
 
@@ -238,8 +246,11 @@ def valuation_result(market, symbol, options):
     symbol = checked_symbol(market, symbol)
     profile = get_settings().model_dump(mode='json')
     values = options.model_dump(exclude_none=True)
+    values.pop('review_scope', None)
     if 'amount' in values:
         profile['amount'] = values.pop('amount')
+    if values.get('loss_amount', 0) > float(profile['amount']):
+        raise HTTPException(422, 'Money at risk cannot exceed the money available for this stock')
     return valuation_snapshot(market, symbol, profile, **values)
 
 
@@ -259,26 +270,35 @@ def stock_valuation(
     risk_budget: float | None = Query(default=None, gt=0, le=100, allow_inf_nan=False),
     planned_stop: float | None = Query(default=None, gt=0, le=1_000_000_000, allow_inf_nan=False),
     planned_target: float | None = Query(default=None, gt=0, le=1_000_000_000, allow_inf_nan=False),
+    holding_weeks: int | None = Query(default=None, ge=4, le=26),
+    loss_amount: float | None = Query(default=None, gt=0, le=1_000_000_000_000, allow_inf_nan=False),
+    min_reward_risk: float | None = Query(default=None, ge=.5, le=10, allow_inf_nan=False),
+    round_trip_cost_percent: float | None = Query(default=None, ge=0, le=10, allow_inf_nan=False),
 ):
     if (cost_basis is None) != (shares is None):
         raise HTTPException(422, 'Supply both average buy price and shares owned')
-    if (risk_budget is None) != (planned_stop is None) or (planned_target is not None and planned_stop is None):
+    if loss_amount is not None and risk_budget is not None:
+        raise HTTPException(422, 'Use a money loss limit or a percentage risk budget, not both')
+    if loss_amount is None and ((risk_budget is None) != (planned_stop is None) or (planned_target is not None and planned_stop is None)):
         raise HTTPException(422, 'Supply both budget-risk percentage and planned exit price before an optional target')
     options = ValuationOptions(amount=amount, annual_goal=annual_goal, max_loss=max_loss,
                                max_volatility=max_volatility, max_downside=max_downside,
                                min_history_years=min_history_years, max_quote_age_minutes=max_quote_age_minutes,
                                min_excess_return=min_excess_return, cost_basis=cost_basis, shares=shares,
-                               risk_budget=risk_budget, planned_stop=planned_stop, planned_target=planned_target)
+                               risk_budget=risk_budget, planned_stop=planned_stop, planned_target=planned_target,
+                               holding_weeks=holding_weeks, loss_amount=loss_amount, min_reward_risk=min_reward_risk,
+                               round_trip_cost_percent=round_trip_cost_percent)
     return valuation_result(market, symbol, options)
 
 
 @app.post('/api/valuation/{market}/{symbol}/research')
 def valuation_web_research(market: str, symbol: str, options: ValuationOptions):
     from .web_research import research_valuation
-    result = research_valuation(valuation_result(market, symbol, options))
+    result = research_valuation(valuation_result(market, symbol, options), scope=options.review_scope or 'opportunity')
     with Session.begin() as db:
-        run = ResearchRunRow(market=market, symbol=result['symbol'], decision=result['buy_assessment']['verdict'],
-                             snapshot={'profile': result['preferences'], 'valuation': result})
+        decision = result['buy_assessment']['verdict'] if options.review_scope == 'long_term' else (result.get('opportunity') or {}).get('verdict', result['buy_assessment']['verdict'])
+        run = ResearchRunRow(market=market, symbol=result['symbol'], decision=decision,
+                             snapshot={'profile': result['preferences'], 'valuation': result, 'review_scope': options.review_scope or 'opportunity'})
         db.add(run)
         db.flush()
         result['analysis_id'] = run.id

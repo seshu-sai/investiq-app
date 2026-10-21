@@ -41,13 +41,18 @@ def get_price_history(market, symbol, benchmark=False):
         frame = data.history(period='10y', interval='1d', auto_adjust=False, timeout=15)
         rows = _rows(frame, 'Adj Close')
         price_closes = _rows(frame)
+        bars = []
+        for index, row in frame.tail(800).iterrows():
+            values = {key.lower(): finite_number(float(row[key])) for key in ('Open', 'High', 'Low', 'Close') if key in frame}
+            if len(values) == 4 and all(value is not None and value > 0 for value in values.values()):
+                bars.append({'date': index.date().isoformat(), **values})
         metadata = data.history_metadata or {}
         currency = metadata.get('currency')
     except HistoryError:
         raise
     except Exception as exc:
         raise HistoryError('Historical provider is unavailable') from exc
-    return {'symbol': ticker, 'currency': currency, 'prices': rows, 'price_closes': price_closes,
+    return {'symbol': ticker, 'currency': currency, 'prices': rows, 'price_closes': price_closes, 'bars': bars,
             'provider': 'Yahoo Finance (unofficial)', 'adjusted': True,
             'retrieved_at': datetime.now(timezone.utc).isoformat(),
             'definition': 'Provider dividend/split-adjusted daily closes; approximate reinvested total returns before tax and costs'}

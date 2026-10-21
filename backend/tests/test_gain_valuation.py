@@ -175,7 +175,8 @@ def mock_web(monkeypatch, output, calls=None):
                 assert kw['tools'] == [{'type': 'web_search'}]
                 assert kw['tool_choice'] == 'required'
                 return SearchResponse()
-            return SimpleNamespace(status='completed', output_text=json.dumps(output))
+            payload = output.get('opportunity_review', output) if kw.get('text', {}).get('format', {}).get('name') == 'opportunity_news' else output
+            return SimpleNamespace(status='completed', output_text=json.dumps(payload))
     monkeypatch.setattr(web_research, 'OpenAI', Client)
 
 

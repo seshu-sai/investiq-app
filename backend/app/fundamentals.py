@@ -4,7 +4,7 @@ import re
 import yfinance as yf
 from datetime import date, datetime, timezone
 
-from .data_utils import finite_number, normalize_symbol, ttl_cache
+from .data_utils import finite_number, normalize_symbol, safe_url, ttl_cache
 
 
 class FundamentalsError(Exception):
@@ -39,6 +39,7 @@ def get_fundamentals(market: str, symbol: str):
         return {
             "symbol": ticker_symbol,
             "company": info.get("longName") or info.get("shortName"),
+            "website": safe_url(info.get("website")),
             "currency": info.get("currency"),
             "trailing_eps": finite_number(info.get("trailingEps")),
             "trailing_pe": positive_number(info.get("trailingPE")),
